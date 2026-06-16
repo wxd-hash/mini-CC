@@ -1,6 +1,6 @@
 # Mini Claude Code
 
-![mini cc--meow~](fig\a7c1b575-9457-46d5-a1f8-e8b1d8f77abc.png)
+![mini cc--meow~](fig/a7c1b575-9457-46d5-a1f8-e8b1d8f77abc.png)
 
 A minimal CLI coding agent powered by Claude or DeepSeek. Built in Python with zero framework dependencies. Talk to your codebase in natural language — the agent reads, writes, searches, runs shell commands, and fixes bugs autonomously.
 
