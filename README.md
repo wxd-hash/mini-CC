@@ -167,32 +167,41 @@ Place a `CLAUDE.md` in your workspace root to inject project instructions. The f
 ```
 mini-claude-code/
 ├── main.py                      # Entry point, CLI args, REPL, banner
+├── test_all.py                  # 28 self-tests (no API key needed)
 ├── pyproject.toml
 ├── requirements.txt
-├── test_all.py                  # 28 self-tests (no API key needed)
 ├── README.md
-├── GUIDE.md
+├── .gitignore
+├── .sessions/                   # Session log directory (data ignored)
+├── fig/                         # Banner image
 └── src/
+    ├── __init__.py
     ├── config.py                # Global config (model, thresholds)
     ├── context.py               # System prompt builder + compaction
     ├── terminal.py              # ANSI styling, menus, paste detection
     ├── agent/
+    │   ├── __init__.py
     │   └── loop.py              # MiniClaudeAgent (LLM ↔ tool loop)
     ├── llm/
+    │   ├── __init__.py
     │   ├── provider.py          # LLMProvider ABC + ToolCall/LLMResponse
     │   ├── anthropic_provider.py
     │   └── openai_provider.py
     ├── tools/
+    │   ├── __init__.py
     │   ├── base.py              # Tool ABC
     │   ├── registry.py          # ToolRegistry (Anthropic + OpenAI schemas)
     │   ├── file_tools.py        # ReadFile, WriteFile, ListFiles, SearchFiles
-    │   ├── shell_tool.py        # RunShell (with encoding auto-detection)
+    │   ├── shell_tool.py        # RunShell (encoding auto-detect, venv PATH)
     │   └── git_tools.py         # GitDiff
     ├── workspace/
+    │   ├── __init__.py
     │   └── sandbox.py           # Path sandbox (escape prevention)
     ├── security/
+    │   ├── __init__.py
     │   └── permission.py        # PermissionManager (plan/ask/auto + menus)
     └── session/
+        ├── __init__.py
         └── logger.py            # JSONL logger + resume + cleanup
 ```
 
