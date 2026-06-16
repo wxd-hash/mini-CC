@@ -182,7 +182,7 @@ Instructions from parent directories load first, workspace-level last — so pro
 
 ## Project memory
 
-The LLM automatically maintains a `memory.md` file at `.sessions/<workspace>/memory.md` to persist preferences, decisions, and gotchas across sessions. When you tell the agent "I prefer pytest" or "use snake_case naming", it can write to this file so the next session remembers.
+The LLM automatically maintains a `memory.md` file in the sessions directory (e.g. `.sessions/E_my_project/memory.md`) to persist preferences, decisions, and gotchas across sessions. The exact path is provided in the system prompt so the LLM knows where to write.
 
 No setup required — the system prompt instructs the LLM to read and update the memory file as needed.
 

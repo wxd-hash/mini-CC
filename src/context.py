@@ -21,7 +21,7 @@ BASE_SYSTEM_PROMPT = """\
 ## 项目记忆
 项目的 <project_memory> 区块包含跨 session 持久化的记忆：用户偏好、架构决策、常见陷阱。
 当你发现重要的用户偏好、架构决策或项目陷阱时，用 write_file 更新记忆文件：
-  path = ".mini-claude-code/sessions/{workspace_name}/memory.md"
+  path = "{memory_path}"
 写入时保留已有内容，添加新条目。如果文件不存在就创建。
 
 ## 规则
@@ -110,9 +110,11 @@ def build_system_prompt(
 ) -> str:
     """Build the full system prompt: base + instructions + memory."""
     from src.session.logger import _workspace_dir_name
+    ws_name = _workspace_dir_name(str(workspace_dir.resolve()))
+    memory_path = f"{sessions_dir / ws_name / 'memory.md'}" if sessions_dir else "(sessions dir not configured)"
     base = BASE_SYSTEM_PROMPT.format(
         workspace=str(workspace_dir.resolve()),
-        workspace_name=_workspace_dir_name(str(workspace_dir.resolve())),
+        memory_path=memory_path,
     )
     parts = [base]
 
