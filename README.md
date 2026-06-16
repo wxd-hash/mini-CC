@@ -7,7 +7,7 @@ A minimal CLI coding agent powered by Claude or DeepSeek. Built in Python with z
 ## Features
 
 - **Streaming output** — responses appear character-by-character in real time, no waiting for full generation
-- **Agent Loop** — user input → LLM → tool calls → loop → final answer (configurable max rounds)
+- **Agent Loop** — user input → LLM → tool calls → loop → final answer (20 rounds by default, configurable via `--max-rounds`)
 - **6 tools** — read_file, write_file, list_files, search_files, git_diff, run_shell
 - **Dual LLM backend** — Anthropic Claude + DeepSeek (OpenAI-compatible) via clean provider abstraction
 - **Permission system** — 3 modes (plan / ask / auto) with interactive keyboard menu and high-risk command detection
@@ -86,6 +86,7 @@ minicc --provider deepseek
 | `--workspace PATH` | `./workspace` | Workspace root directory |
 | `--log-dir PATH` | `./.sessions` | Session log directory |
 | `--mode plan\|ask\|auto` | `ask` | Permission mode |
+| `--max-rounds N` | `20` | Max tool-call rounds per user turn |
 | `--resume` | — | Show session picker for this workspace |
 | `--no-color` | — | Disable ANSI color output |
 

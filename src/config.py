@@ -11,7 +11,7 @@ MODEL_DEEPSEEK: str = "deepseek-chat"
 DEEPSEEK_API_BASE: str = "https://api.deepseek.com/v1"
 
 # Agent loop
-MAX_TOOL_ROUNDS: int = 10
+MAX_TOOL_ROUNDS: int = 20
 
 # Context compaction
 MAX_MESSAGES_BEFORE_COMPACT: int = 30

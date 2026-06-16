@@ -23,12 +23,14 @@ class MiniClaudeAgent:
         logger: SessionLogger,
         workspace_dir: Path,
         provider: LLMProvider,
+        max_rounds: int = MAX_TOOL_ROUNDS,
     ) -> None:
         self.tool_registry = tool_registry
         self.permission = permission
         self.logger = logger
         self._workspace_dir = workspace_dir.resolve()
         self._provider = provider
+        self.max_rounds = max_rounds
         self._messages: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------------
@@ -42,7 +44,7 @@ class MiniClaudeAgent:
 
         tools = self._provider.tools_for_provider(self.tool_registry)
 
-        for _ in range(MAX_TOOL_ROUNDS):
+        for _ in range(self.max_rounds):
             self._maybe_compact()
             system = build_system_prompt(self._workspace_dir)
 
@@ -82,7 +84,7 @@ class MiniClaudeAgent:
 
         # Max rounds — finalize without tools
         print()
-        print(term.info(f"[max {MAX_TOOL_ROUNDS} tool calls reached, finishing]"))
+        print(term.info(f"[max {self.max_rounds} tool calls reached, finishing]"))
 
         self._maybe_compact()
         system = build_system_prompt(self._workspace_dir)

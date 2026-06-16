@@ -9,7 +9,7 @@ from pathlib import Path
 from src import terminal as term
 from src.agent.loop import MiniClaudeAgent
 from src.commands import do_resume
-from src.config import MODEL_ANTHROPIC, MODEL_DEEPSEEK, DEEPSEEK_API_BASE
+from src.config import MODEL_ANTHROPIC, MODEL_DEEPSEEK, DEEPSEEK_API_BASE, MAX_TOOL_ROUNDS
 from src.llm.anthropic_provider import AnthropicProvider
 from src.llm.openai_provider import OpenAIProvider
 from src.repl import print_banner, run_repl
@@ -39,12 +39,14 @@ def run(args) -> None:
     registry.register(GitDiff(workspace.root))
     registry.register(RunShell(workspace.root))
 
+    max_rounds = args.max_rounds if args.max_rounds else MAX_TOOL_ROUNDS
     agent = MiniClaudeAgent(
         tool_registry=registry,
         permission=permission,
         logger=logger,
         workspace_dir=workspace.root,
         provider=provider,
+        max_rounds=max_rounds,
     )
 
     resumed = args.resume is not False

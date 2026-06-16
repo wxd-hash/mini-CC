@@ -22,6 +22,8 @@ def main() -> None:
                         help="API base URL override (DeepSeek only)")
     parser.add_argument("--resume", nargs="?", const=True, default=False,
                         help="Resume from a previous session")
+    parser.add_argument("--max-rounds", type=int, default=None,
+                        help="Max tool-call rounds per turn (default: 20)")
     parser.add_argument("--no-color", action="store_true", default=False,
                         help="Disable ANSI color output")
     args = parser.parse_args()
