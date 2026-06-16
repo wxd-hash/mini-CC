@@ -5,14 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from src.config import MAX_MESSAGES_BEFORE_COMPACT, KEEP_RECENT_MESSAGES
+from src.config import MAX_MESSAGES_BEFORE_COMPACT, KEEP_RECENT_MESSAGES, MAX_TOOL_ROUNDS
 from src.context import build_system_prompt, compact_messages
 from src.llm.provider import LLMProvider
 from src.security.permission import PermissionManager
 from src.session.logger import SessionLogger
 from src import terminal as term
-
-MAX_TOOL_ROUNDS = 10
 
 
 class MiniClaudeAgent:
@@ -64,11 +62,9 @@ class MiniClaudeAgent:
             if response.text:
                 self.logger.assistant_text(response.text)
 
-            # No tool calls — final answer
+            # No tool calls — final answer (text already streamed by provider)
             if not response.tool_calls:
                 if response.text:
-                    print()
-                    print(term.assistant_text(response.text))
                     print()
                 self._messages.append(response.assistant_message)
                 return response.text
@@ -104,15 +100,17 @@ class MiniClaudeAgent:
 
         if response.text:
             print()
-            print(term.assistant_text(response.text))
-            print()
         self._messages.append(response.assistant_message)
         self.logger.assistant_text(response.text)
         return response.text
 
     def resume(self, history: list[dict[str, Any]]) -> None:
         """Load previous session messages into the agent's history."""
-        self._messages.extend(history)
+        for msg in history:
+            if msg["role"] == "user":
+                self._messages.append(self._provider.make_user_message(msg["content"]))
+            else:
+                self._messages.append({"role": "assistant", "content": msg["content"]})
 
     def clear(self) -> None:
         """Reset conversation history."""
@@ -127,6 +125,7 @@ class MiniClaudeAgent:
         if len(self._messages) <= MAX_MESSAGES_BEFORE_COMPACT:
             return
 
+        print(term.info("[compacting conversation...]"), flush=True)
         before = len(self._messages)
         system = build_system_prompt(self._workspace_dir)
 

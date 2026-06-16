@@ -113,25 +113,30 @@ def compact_messages(
 
     cutoff = len(messages) - keep_recent
 
-    # Don't split a tool-call sequence: if the first kept message is a
-    # 'tool' response, walk back to include its parent assistant message
-    # (OpenAI requires every tool message to follow tool_calls).
+    # Don't split a tool-call sequence: walk back to include the parent
+    # assistant message that owns any leading tool responses.
     adjusted = cutoff
     while adjusted > 0 and messages[adjusted].get("role") == "tool":
         adjusted -= 1
     if adjusted < cutoff:
-        # Find the assistant message that owns these tool calls
         parent = adjusted
         while parent > 0 and not (
             messages[parent].get("role") == "assistant"
             and messages[parent].get("tool_calls")
         ):
             parent -= 1
-        if parent > 0:
-            adjusted = parent
+        adjusted = max(parent, 0)
 
-    old = messages[:adjusted]
     recent = messages[adjusted:]
+
+    # Belt-and-suspenders: strip any remaining orphaned tool messages
+    # at the front of recent (edge case when adjusted lands on 0).
+    while recent and recent[0].get("role") == "tool":
+        recent = recent[1:]
+    if not recent:
+        return messages  # nothing left — abort compaction
+
+    old = messages[: messages.index(recent[0])]
     old_text = _messages_to_text(old)
 
     req_msg = provider.make_user_message(f"Summarize:\n\n{old_text}")
