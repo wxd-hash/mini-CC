@@ -10,7 +10,7 @@ from src.tools.base import Tool
 
 
 class GitDiff(Tool):
-    """Show unstaged changes via ``git diff`` inside the workspace."""
+    """Show git diff of working-tree or staged changes."""
 
     MAX_OUTPUT = 12000
 
@@ -27,7 +27,7 @@ class GitDiff(Tool):
 
     @property
     def description(self) -> str:
-        return "Show git diff of unstaged changes within the workspace (read-only)"
+        return "Show git diff of unstaged or staged changes (read-only)"
 
     @property
     def input_schema(self) -> dict[str, Any]:
@@ -37,6 +37,10 @@ class GitDiff(Tool):
                 "path": {
                     "type": "string",
                     "description": "Path relative to workspace (default '.')",
+                },
+                "staged": {
+                    "type": "boolean",
+                    "description": "Show staged changes instead of unstaged (default false)",
                 },
             },
             "required": [],
@@ -48,31 +52,26 @@ class GitDiff(Tool):
 
     def run(self, args: dict[str, Any]) -> str:
         target = args.get("path", ".")
+        staged = args.get("staged", False)
 
-        # Check if we're in a git repo
         try:
             subprocess.run(
                 ["git", "rev-parse", "--git-dir"],
-                capture_output=True,
-                text=True,
-                cwd=str(self._ws),
-                check=True,
-                timeout=10,
+                capture_output=True, text=True,
+                cwd=str(self._ws), check=True, timeout=10,
             )
         except (subprocess.CalledProcessError, FileNotFoundError):
-            return (
-                "Not a git repository. "
-                "Initialize one with: git init"
-            )
+            return "Not a git repository. Initialize one with: git init"
 
-        # Run git diff
+        cmd = ["git", "diff"]
+        if staged:
+            cmd.append("--staged")
+        cmd += ["--", target]
+
         try:
             result = subprocess.run(
-                ["git", "diff", "--", target],
-                capture_output=True,
-                text=True,
-                cwd=str(self._ws),
-                timeout=30,
+                cmd, capture_output=True, text=True,
+                cwd=str(self._ws), timeout=30,
             )
         except subprocess.TimeoutExpired:
             return "Error: git diff timed out"
@@ -80,8 +79,9 @@ class GitDiff(Tool):
             return "Error: git is not installed or not on PATH"
 
         output = result.stdout.rstrip()
+        label = "staged" if staged else "working tree"
         if not output:
-            return "No changes (working tree clean)"
+            return f"No changes ({label} clean)"
 
         if result.stderr:
             output += f"\n\n[stderr]\n{result.stderr.rstrip()}"

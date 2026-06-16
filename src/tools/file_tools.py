@@ -11,6 +11,15 @@ from src.tools.base import Tool
 _IGNORE_DIRS = frozenset({".git", "__pycache__", "node_modules", ".venv"})
 
 
+def _fmt_size(n: int) -> str:
+    """Human-readable file size."""
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024:
+            return f"{n} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} TB"
+
+
 def safe_path(path_str: str, workspace_dir: Path | None = None) -> Path:
     """Resolve *path_str* relative to the workspace directory.
 
@@ -128,8 +137,7 @@ class WriteFile(Tool):
         content = args["content"]
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
-        rel = path.relative_to(self._ws)
-        return f"Wrote {len(content)} chars to {rel}"
+        return f"Wrote {len(content)} chars to {path}"
 
 
 class ListFiles(Tool):
@@ -170,8 +178,11 @@ class ListFiles(Tool):
         for p in sorted(dir_path.iterdir()):
             if p.name in _IGNORE_DIRS:
                 continue
-            tag = "/" if p.is_dir() else ""
-            entries.append(f"  {p.name}{tag}")
+            if p.is_dir():
+                entries.append(f"  {p.name}/")
+            else:
+                size = _fmt_size(p.stat().st_size)
+                entries.append(f"  {p.name}  ({size})")
 
         total = len(entries)
         if total > self.MAX_ENTRIES:
@@ -227,15 +238,72 @@ class SearchFiles(Tool):
         if not root.is_dir():
             return f"Error: not a directory: {args.get('path', '.')!r}"
 
+        # Try ripgrep first for speed on large projects
+        result = self._rg_search(query, root)
+        if result is not None:
+            return result
+
+        # Fall back to pure Python
+        return self._slow_search(query, root, args.get("path", "."))
+
+    # ------------------------------------------------------------------
+    # ripgrep accelerated search
+    # ------------------------------------------------------------------
+
+    def _rg_search(self, query: str, root: Path) -> str | None:
+        """Try ripgrep. Returns ``None`` if rg is unavailable or times out."""
+        import subprocess
+        try:
+            ignores: list[str] = []
+            for d in _IGNORE_DIRS:
+                ignores += ["--glob", f"!{d}", "--glob", f"!{d}/**"]
+            proc = subprocess.run(
+                [
+                    "rg", "--no-heading", "--line-number",
+                    "--max-count", str(self.MAX_RESULTS),
+                    *ignores,
+                    "--", query, str(root),
+                ],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return None
+
+        output = proc.stdout.rstrip()
+        if proc.returncode == 1 and not output:
+            return f"No matches for {query!r}"
+        if not output:
+            return None  # unexpected — fall back
+
+        lines = output.split("\n")
+        truncated = len(lines) > self.MAX_RESULTS
+        if truncated:
+            lines = lines[: self.MAX_RESULTS]
+
+        # Truncate long lines
+        result_lines: list[str] = []
+        for line in lines:
+            if len(line) > self.MAX_LINE_CHARS + 50:
+                line = line[: self.MAX_LINE_CHARS + 50] + "..."
+            result_lines.append(line)
+
+        header = f"Search results for {query!r} ({len(result_lines)} matches):\n"
+        if truncated:
+            return header + "\n".join(result_lines) + f"\n  ... (truncated at {self.MAX_RESULTS} results)"
+        return header + "\n".join(result_lines) if result_lines else f"No matches for {query!r}"
+
+    # ------------------------------------------------------------------
+    # Pure-Python fallback
+    # ------------------------------------------------------------------
+
+    def _slow_search(self, query: str, root: Path, label: str) -> str:
         results: list[str] = []
         for fpath in sorted(root.rglob("*")):
-            # Skip ignored dirs
             if any(p.name in _IGNORE_DIRS for p in fpath.parents) or fpath.name in _IGNORE_DIRS:
                 continue
             if not fpath.is_file():
                 continue
 
-            # Try reading as text; skip binary
             try:
                 lines = fpath.read_text(encoding="utf-8").splitlines()
             except (UnicodeDecodeError, OSError):
@@ -254,7 +322,7 @@ class SearchFiles(Tool):
                 break
 
         if not results:
-            return f"No matches for {query!r} in {args.get('path', '.')}"
+            return f"No matches for {query!r} in {label}"
 
         header = f"Search results for {query!r} ({min(len(results), self.MAX_RESULTS)} matches):\n"
         if len(results) >= self.MAX_RESULTS:
