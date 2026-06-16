@@ -71,6 +71,10 @@ class MiniClaudeAgent:
                 self._messages.append(response.assistant_message)
                 return response.text
 
+            # Separate streamed text from tool output
+            if response.text:
+                print()
+
             # Execute tool calls
             tool_msgs, final_text = self._execute_tools(response)
 
