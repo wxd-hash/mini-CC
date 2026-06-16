@@ -6,7 +6,8 @@ A minimal CLI coding agent powered by Claude or DeepSeek. Built in Python with z
 
 ## Features
 
-- **Agent Loop** — user input → LLM → tool calls → loop → final answer (max 10 rounds/turn)
+- **Streaming output** — responses appear character-by-character in real time, no waiting for full generation
+- **Agent Loop** — user input → LLM → tool calls → loop → final answer (configurable max rounds)
 - **6 tools** — read_file, write_file, list_files, search_files, git_diff, run_shell
 - **Dual LLM backend** — Anthropic Claude + DeepSeek (OpenAI-compatible) via clean provider abstraction
 - **Permission system** — 3 modes (plan / ask / auto) with interactive keyboard menu and high-risk command detection
@@ -15,13 +16,13 @@ A minimal CLI coding agent powered by Claude or DeepSeek. Built in Python with z
 - **Session resume** — organized by workspace, interactive picker with session names and timestamps
 - **Context compaction** — auto-summarizes old messages when history exceeds 30 messages
 - **CLAUDE.md** — project-level instructions injected live into the system prompt
-- **Styled terminal UI** — colored prompts, mode indicator, horizontal rules, ASCII cat banner
+- **Styled terminal UI** — colored prompts, mode indicator, horizontal rules, ASCII cat banner, `--no-color` for CI
 
 ## Installation
 
 ```bash
-git clone <repo>
-cd mini-claude-code
+git clone https://github.com/wxd-hash/mini-CC.git
+cd mini-CC
 python -m venv .venv
 
 # Windows
@@ -61,11 +62,14 @@ export DEEPSEEK_API_KEY="sk-..."
 # Default (Anthropic, ask mode)
 python main.py
 
-# DeepSeek
+# DeepSeek with streaming
 python main.py --provider deepseek
 
 # Point to a different project
 python main.py --workspace E:\my_project
+
+# CI / pipe-friendly (no ANSI colors)
+python main.py --no-color
 
 # Global command (after pip install -e .)
 minicc --provider deepseek
@@ -83,6 +87,7 @@ minicc --provider deepseek
 | `--log-dir PATH` | `./.sessions` | Session log directory |
 | `--mode plan\|ask\|auto` | `ask` | Permission mode |
 | `--resume` | — | Show session picker for this workspace |
+| `--no-color` | — | Disable ANSI color output |
 
 ### Slash commands
 
@@ -102,7 +107,7 @@ minicc --provider deepseek
 | **ask** | auto-allow | interactive menu | interactive menu |
 | **auto** | auto-allow | auto-allow | low-risk auto / high-risk menu |
 
-The permission menu supports keyboard navigation: `↑↓` / `ws` / `jk` to move, `Enter` to confirm, `Esc` to cancel.
+The permission menu supports keyboard navigation: `↑↓` / `ws` / `jk` to move, `Enter` to confirm, `Esc` to cancel. Three options per prompt: **Yes**, **Yes, and don't ask again**, **No**.
 
 High-risk shell commands: `rm`, `sudo`, `curl`, `wget`, `ssh`, `scp`, `chmod`, `chown`, `git push`, `pip install`, `npm install`.
 
@@ -113,11 +118,11 @@ High-risk shell commands: `rm`, `sudo`, `curl`, `wget`, `ssh`, `scp`, `chmod`, `
 | Tool | Input | Behavior |
 |---|---|---|
 | `read_file` | `path` | UTF-8 read, max 12000 chars with truncation notice |
-| `write_file` | `path`, `content` | Creates parent dirs, returns char count |
-| `list_files` | `path` (optional, default `.`) | Up to 200 entries, ignores `.git`/`__pycache__`/`node_modules`/`.venv` |
-| `search_files` | `query`, `path` (optional) | Line-by-line text search, skips binary, max 100 matches |
-| `git_diff` | `path` (optional, default `.`) | Read-only, friendly message if not a git repo |
-| `run_shell` | `command` | 30s timeout, utf-8 auto-detection, venv PATH injected |
+| `write_file` | `path`, `content` | Creates parent dirs, returns absolute path and char count |
+| `list_files` | `path` (optional, default `.`) | Up to 200 entries with file sizes, ignores `.git`/`__pycache__`/`node_modules`/`.venv` |
+| `search_files` | `query`, `path` (optional) | Tries ripgrep first for speed, falls back to pure Python; skips binary, max 100 matches |
+| `git_diff` | `path` (optional), `staged` (optional) | Read-only, supports `--staged` flag, friendly message if not a git repo |
+| `run_shell` | `command` | 30s timeout, GBK/UTF-8 auto-detection, venv PATH injected |
 
 ## Sessions & resume
 
@@ -166,7 +171,7 @@ Place a `CLAUDE.md` in your workspace root to inject project instructions. The f
 
 ```
 mini-claude-code/
-├── main.py                      # Entry point, CLI args, REPL, banner
+├── main.py                      # Entry point (CLI parsing only)
 ├── test_all.py                  # 28 self-tests (no API key needed)
 ├── pyproject.toml
 ├── requirements.txt
@@ -176,24 +181,27 @@ mini-claude-code/
 ├── fig/                         # Banner image
 └── src/
     ├── __init__.py
-    ├── config.py                # Global config (model, thresholds)
+    ├── app.py                   # Application wiring (provider, tools, agent)
+    ├── config.py                # Global config (model, thresholds, max rounds)
     ├── context.py               # System prompt builder + compaction
-    ├── terminal.py              # ANSI styling, menus, paste detection
+    ├── terminal.py              # ANSI styling, menus, paste detection, no-color
+    ├── repl.py                  # Interactive loop, banner, prompt
+    ├── commands.py              # Slash commands + resume handlers
     ├── agent/
     │   ├── __init__.py
     │   └── loop.py              # MiniClaudeAgent (LLM ↔ tool loop)
     ├── llm/
     │   ├── __init__.py
     │   ├── provider.py          # LLMProvider ABC + ToolCall/LLMResponse
-    │   ├── anthropic_provider.py
-    │   └── openai_provider.py
+    │   ├── anthropic_provider.py  # Anthropic with streaming
+    │   └── openai_provider.py     # OpenAI/DeepSeek with streaming
     ├── tools/
     │   ├── __init__.py
     │   ├── base.py              # Tool ABC
     │   ├── registry.py          # ToolRegistry (Anthropic + OpenAI schemas)
     │   ├── file_tools.py        # ReadFile, WriteFile, ListFiles, SearchFiles
     │   ├── shell_tool.py        # RunShell (encoding auto-detect, venv PATH)
-    │   └── git_tools.py         # GitDiff
+    │   └── git_tools.py         # GitDiff (unstaged + staged)
     ├── workspace/
     │   ├── __init__.py
     │   └── sandbox.py           # Path sandbox (escape prevention)
