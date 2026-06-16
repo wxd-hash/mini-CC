@@ -14,8 +14,10 @@ A minimal CLI coding agent powered by Claude or DeepSeek. Built in Python with z
 - **Workspace sandbox** — all file I/O restricted to a workspace directory with path-escape protection
 - **JSONL session logging** — append-only, 7 event types, auto-cleanup of empty sessions
 - **Session resume** — organized by workspace, interactive picker with session names and timestamps
-- **Context compaction** — auto-summarizes old messages when history exceeds 30 messages
-- **CLAUDE.md** — project-level instructions injected live into the system prompt
+- **Context compaction** — two-tier: free micro-compact truncates old tool results, then LLM summarization reduces message count when >30
+- **Hierarchical CLAUDE.md** — walks from workspace up to filesystem root, collecting instructions at each level (workspace overrides parent)
+- **Project memory** — `memory.md` persists user preferences and decisions across sessions; LLM can read and update it via tools
+- **Prompt caching** — system prompt built once per turn, rebuilt after compaction or `/reload`
 - **Styled terminal UI** — colored prompts, mode indicator, horizontal rules, ASCII cat banner, `--no-color` for CI
 
 ## Installation
@@ -99,6 +101,7 @@ minicc --provider deepseek
 | `/tool <name> <json>` | Manual tool call (bypasses LLM) |
 | `/perm <plan\|ask\|auto\|status>` | Switch or view permission mode |
 | `/clear` | Reset conversation history |
+| `/reload` | Force-refresh CLAUDE.md and project memory |
 
 ## Permission modes
 
@@ -156,17 +159,32 @@ Select a session to resume:
 
 The full conversation history is loaded and displayed in the terminal. Empty sessions (no user messages) are automatically deleted.
 
-## CLAUDE.md
+## CLAUDE.md (hierarchical)
 
-Place a `CLAUDE.md` in your workspace root to inject project instructions. The file is re-read before every LLM call, so edits take effect immediately — no restart needed.
+CLAUDE.md files are discovered by walking from the workspace up to the filesystem root. Three variants are checked at each directory level:
+
+- `CLAUDE.md`
+- `.claude/CLAUDE.md`
+- `CLAUDE.local.md`
+
+Instructions from parent directories load first, workspace-level last — so project rules can override global defaults. Edits take effect after `/reload` or at the start of the next turn.
 
 ```markdown
-# Project Instructions
-- Project uses Python
-- Run pytest after every change
-- Keep code simple, avoid over-abstraction
-- Dependencies go in pyproject.toml
+# E:\projects\CLAUDE.md (all projects)
+- Use pytest for testing
+- Keep code simple
 ```
+
+```markdown
+# E:\projects\my-app\CLAUDE.md (this project only)
+- Database is SQLite, not PostgreSQL
+```
+
+## Project memory
+
+The LLM automatically maintains a `memory.md` file at `.sessions/<workspace>/memory.md` to persist preferences, decisions, and gotchas across sessions. When you tell the agent "I prefer pytest" or "use snake_case naming", it can write to this file so the next session remembers.
+
+No setup required — the system prompt instructs the LLM to read and update the memory file as needed.
 
 ## Project structure
 
