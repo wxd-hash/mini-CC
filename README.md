@@ -172,7 +172,7 @@ Place a `CLAUDE.md` in your workspace root to inject project instructions. The f
 ```
 mini-claude-code/
 ├── main.py                      # Entry point (CLI parsing only)
-├── test_all.py                  # 28 self-tests (no API key needed)
+├── test_all.py                  # 37 self-tests (no API key needed)
 ├── pyproject.toml
 ├── requirements.txt
 ├── README.md
@@ -216,7 +216,7 @@ mini-claude-code/
 ## Quick test
 
 ```bash
-# Run all 28 unit tests (no API key required)
+# Run all 37 unit tests (no API key required)
 python test_all.py
 
 # Demo: fix a bug with the agent
