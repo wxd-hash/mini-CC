@@ -39,6 +39,7 @@ class MiniClaudeAgent:
 
     def run(self, user_input: str) -> str | None:
         """Process one user turn.  Returns the final assistant text or None."""
+        self.permission.reset_for_turn()
         self._messages.append(self._provider.make_user_message(user_input))
         self.logger.user_input(user_input)
 

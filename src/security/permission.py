@@ -35,11 +35,18 @@ class PermissionManager:
     - **plan**: read_file / list_files allowed; write / shell denied.
     - **ask**: read_file / list_files auto; write / shell require y/n prompt.
     - **auto**: all allowed except high-risk shell commands (still prompt).
+
+    "Don't ask again" grants are per-**turn** (one user message + its tool chain).
+    They reset at the start of each new user input.
     """
 
     def __init__(self, mode: Mode = Mode.ASK) -> None:
         self.mode = mode
-        self._always_allow: set[str] = set()  # "don't ask again" for this session
+        self._always_allow: set[str] = set()  # "don't ask again" for current turn
+
+    def reset_for_turn(self) -> None:
+        """Clear turn-scoped auto-allow grants. Called at the start of each user turn."""
+        self._always_allow.clear()
 
     # ------------------------------------------------------------------
     # Public API

@@ -616,6 +616,45 @@ def test_agent_messages_accumulate():
     ok("messages accumulate across turns")
 
 
+def test_agent_dont_ask_again_per_turn():
+    """'Don't ask again' resets between turns — each new user message re-prompts."""
+    print("\n[9i] Agent loop: 'don't ask again' per-turn reset")
+
+    from src.security.permission import PermissionManager, Mode
+
+    # Unit test: reset_for_turn clears _always_allow
+    pm = PermissionManager(Mode.ASK)
+    pm._always_allow.add("write_file")
+    pm._always_allow.add("run_shell")
+    assert len(pm._always_allow) == 2
+    pm.reset_for_turn()
+    assert len(pm._always_allow) == 0, "_always_allow should be empty after reset"
+    ok("reset_for_turn() clears _always_allow")
+
+    # Integration test: agent.run() calls reset_for_turn() at start of each turn
+    with tempfile.TemporaryDirectory() as tmp:
+        ws = Path(tmp)
+        agent, provider, log = _make_agent(ws, mode="ask", responses=[
+            "response to turn 1",
+            "response to turn 2",
+        ])
+
+        # Turn 1: manually grant "don't ask again" after run() starts
+        agent.permission._always_allow.add("write_file")
+
+        # Turn 2: run() should clear it via reset_for_turn()
+        agent.run("second message")
+
+        assert "write_file" not in agent.permission._always_allow, (
+            "_always_allow should be empty at start of turn 2"
+        )
+
+        log.close()
+    ok("agent.run() calls reset_for_turn() each turn")
+
+    ok("_always_allow cleared at start of each turn")
+
+
 def test_agent_mock_provider():
     """MockProvider itself works correctly."""
     print("\n[9i] MockProvider: behavior verification")
@@ -669,6 +708,7 @@ if __name__ == "__main__":
         test_agent_max_rounds,
         test_agent_interleaved_text,
         test_agent_messages_accumulate,
+        test_agent_dont_ask_again_per_turn,
     ]
 
     for t in tests:
