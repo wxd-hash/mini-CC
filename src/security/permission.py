@@ -117,7 +117,6 @@ class PermissionManager:
 
         if idx == 1:
             self._always_allow.add(tool_name)
-            print(term.success(f"Will auto-allow {tool_name} for this session"))
             return True
         if idx == 0:
             return True
