@@ -1,0 +1,33 @@
+# IDE
+.idea/
+
+# Claude Code
+.claude/
+
+# Bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+
+# Session logs
+.sessions/
+
+# Workspace (user project files)
+workspace/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Screenshots / assets
+fig/
+
+# Local scripts
+minicc.bat
+minicc.ps1
+
+# GUIDE (Chinese)
+GUIDE.md
