@@ -36,7 +36,7 @@ def print_banner(provider, logger, workspace, permission) -> None:
         term.banner_line("Workspace", str(workspace.root)),
         term.banner_line("Mode", permission.mode.value),
         hr_fixed,
-        term.info("/tools  /tool  /perm  /clear  /exit"),
+        term.info("/tools  /tool  /perm  /clear  /reload  /exit"),
     ]
 
     while len(cat) < len(info):
@@ -104,6 +104,10 @@ def run_repl(
 
         if stripped == "/clear":
             agent.clear()
+            continue
+
+        if stripped == "/reload":
+            agent.reload()
             continue
 
         agent.run(stripped)

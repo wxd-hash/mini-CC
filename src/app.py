@@ -48,6 +48,7 @@ def run(args) -> None:
         provider=provider,
         max_rounds=max_rounds,
     )
+    agent.set_sessions_dir(args.log_dir)
 
     resumed = args.resume is not False
     if resumed:

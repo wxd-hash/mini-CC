@@ -18,6 +18,12 @@ BASE_SYSTEM_PROMPT = """\
 - run_shell 的命令会在此目录下执行，不需要 cd
 - 所有文件操作都在此目录内
 
+## 项目记忆
+项目的 <project_memory> 区块包含跨 session 持久化的记忆：用户偏好、架构决策、常见陷阱。
+当你发现重要的用户偏好、架构决策或项目陷阱时，用 write_file 更新记忆文件：
+  path = ".mini-claude-code/sessions/{workspace_name}/memory.md"
+写入时保留已有内容，添加新条目。如果文件不存在就创建。
+
 ## 规则
 - 修改文件前先 read_file
 - 修改后尽量 run_shell 测试
@@ -30,6 +36,7 @@ BASE_SYSTEM_PROMPT = """\
 # ---------------------------------------------------------------------------
 
 MAX_INSTRUCTIONS_CHARS = 8000
+MEMORY_MAX_CHARS = 6000
 
 
 # ---------------------------------------------------------------------------
@@ -37,36 +44,87 @@ MAX_INSTRUCTIONS_CHARS = 8000
 # ---------------------------------------------------------------------------
 
 def load_project_instructions(workspace_dir: Path) -> str:
-    """Read CLAUDE.md from the workspace root (one file only, no recursion).
+    """Walk from *workspace_dir* up to the filesystem root, collecting
+    ``CLAUDE.md``, ``.claude/CLAUDE.md``, and ``CLAUDE.local.md`` at each
+    level.
 
-    Returns an empty string if the file does not exist.
+    Files closer to the workspace appear later and can override earlier
+    (higher-level) instructions.  Each file is capped at
+    ``MAX_INSTRUCTIONS_CHARS`` characters individually.
     """
-    path = workspace_dir / "CLAUDE.md"
-    if not path.is_file():
-        return ""
+    parts: list[str] = []
+    seen: set[str] = set()
+    ws = workspace_dir.resolve()
 
+    for parent in [ws, *ws.parents]:
+        for name in ("CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md"):
+            path = parent / name
+            key = str(path.resolve())
+            if not path.is_file() or key in seen:
+                continue
+            seen.add(key)
+            try:
+                content = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if len(content) > MAX_INSTRUCTIONS_CHARS:
+                content = content[:MAX_INSTRUCTIONS_CHARS] + (
+                    f"\n\n... [truncated at {MAX_INSTRUCTIONS_CHARS} chars]"
+                )
+            label = _relative_label(path, ws)
+            parts.append(f"<!-- {label} -->\n{content}")
+
+    # Reversed: root-level instructions first, workspace-last (highest priority)
+    return "\n\n".join(reversed(parts))
+
+
+def _relative_label(path: Path, workspace: Path) -> str:
+    """Human-readable label showing where a CLAUDE.md was found."""
     try:
-        content = path.read_text(encoding="utf-8")
+        return str(path.relative_to(workspace))
+    except ValueError:
+        return str(path)
+
+
+def load_memory(workspace_dir: Path, sessions_dir: Path | None = None) -> str:
+    """Load the project memory file (cross-session persistent preferences)."""
+    if sessions_dir is None:
+        return ""
+    from src.session.logger import _workspace_dir_name
+    ws_name = _workspace_dir_name(str(workspace_dir.resolve()))
+    memory_path = sessions_dir / ws_name / "memory.md"
+    if not memory_path.is_file():
+        return ""
+    try:
+        content = memory_path.read_text(encoding="utf-8")
     except OSError:
         return ""
-    if len(content) > MAX_INSTRUCTIONS_CHARS:
-        content = content[:MAX_INSTRUCTIONS_CHARS] + (
-            f"\n\n... [truncated at {MAX_INSTRUCTIONS_CHARS} chars]"
-        )
+    if len(content) > MEMORY_MAX_CHARS:
+        content = content[:MEMORY_MAX_CHARS] + "\n... [truncated]"
     return content
 
 
-def build_system_prompt(workspace_dir: Path) -> str:
-    """Build the full system prompt, including CLAUDE.md if present."""
-    base = BASE_SYSTEM_PROMPT.format(workspace=str(workspace_dir.resolve()))
-    instructions = load_project_instructions(workspace_dir)
-    if not instructions:
-        return base
-
-    return (
-        base
-        + f"\n\n<project_instructions>\n{instructions}\n</project_instructions>"
+def build_system_prompt(
+    workspace_dir: Path,
+    sessions_dir: Path | None = None,
+) -> str:
+    """Build the full system prompt: base + instructions + memory."""
+    from src.session.logger import _workspace_dir_name
+    base = BASE_SYSTEM_PROMPT.format(
+        workspace=str(workspace_dir.resolve()),
+        workspace_name=_workspace_dir_name(str(workspace_dir.resolve())),
     )
+    parts = [base]
+
+    instructions = load_project_instructions(workspace_dir)
+    if instructions:
+        parts.append(f"<project_instructions>\n{instructions}\n</project_instructions>")
+
+    memory = load_memory(workspace_dir, sessions_dir)
+    if memory:
+        parts.append(f"<project_memory>\n{memory}\n</project_memory>")
+
+    return "\n\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +154,37 @@ Include these sections:
 (Recommended next steps)
 
 Be concise. Use Chinese if the conversation is in Chinese."""
+
+
+def micro_compact(
+    messages: list[dict[str, Any]],
+    keep_recent: int = 6,
+) -> list[dict[str, Any]]:
+    """Truncate old tool results in-place — zero cost, no API call.
+
+    Only messages beyond *keep_recent* are affected.  Tool-result content
+    is replaced with ``[content truncated]``, keeping the structure intact
+    so both Anthropic and OpenAI providers stay happy.
+    """
+    if len(messages) <= keep_recent:
+        return messages
+
+    for i in range(len(messages) - keep_recent):
+        msg = messages[i]
+        role = msg.get("role", "")
+        content = msg.get("content")
+
+        # Anthropic: tool_results live inside a user message's content block list
+        if role == "user" and isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    block["content"] = "[content truncated]"
+
+        # OpenAI: tool results are standalone role="tool" messages
+        elif role == "tool" and isinstance(content, str):
+            msg["content"] = "[content truncated]"
+
+    return messages
 
 
 def compact_messages(

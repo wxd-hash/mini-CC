@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from src.config import MAX_MESSAGES_BEFORE_COMPACT, KEEP_RECENT_MESSAGES, MAX_TOOL_ROUNDS
-from src.context import build_system_prompt, compact_messages
+from src.context import build_system_prompt, compact_messages, micro_compact
 from src.llm.provider import LLMProvider
 from src.security.permission import PermissionManager
 from src.session.logger import SessionLogger
@@ -31,7 +31,9 @@ class MiniClaudeAgent:
         self._workspace_dir = workspace_dir.resolve()
         self._provider = provider
         self.max_rounds = max_rounds
+        self._sessions_dir: Path | None = None
         self._messages: list[dict[str, Any]] = []
+        self._cached_prompt: str | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -47,7 +49,7 @@ class MiniClaudeAgent:
 
         for _ in range(self.max_rounds):
             self._maybe_compact()
-            system = build_system_prompt(self._workspace_dir)
+            system = self._system_prompt
 
             try:
                 response = self._provider.send_message(
@@ -92,7 +94,7 @@ class MiniClaudeAgent:
         print(term.info(f"[max {self.max_rounds} tool calls reached, finishing]"))
 
         self._maybe_compact()
-        system = build_system_prompt(self._workspace_dir)
+        system = build_system_prompt(self._workspace_dir, self._sessions_dir)
         try:
             response = self._provider.send_message(
                 system_prompt=system,
@@ -119,6 +121,25 @@ class MiniClaudeAgent:
             else:
                 self._messages.append({"role": "assistant", "content": msg["content"]})
 
+    @property
+    def _system_prompt(self) -> str:
+        """Lazily-built, cached system prompt.  Call ``reload()`` to refresh."""
+        if self._cached_prompt is None:
+            self._cached_prompt = build_system_prompt(
+                self._workspace_dir, self._sessions_dir
+            )
+        return self._cached_prompt
+
+    def reload(self) -> None:
+        """Force-rebuild the system prompt on the next API call
+        (e.g. after editing CLAUDE.md or after compaction restructures messages)."""
+        self._cached_prompt = None
+        print(term.info("[system prompt reloaded]"))
+
+    def set_sessions_dir(self, path: Path) -> None:
+        """Set the sessions directory for memory loading."""
+        self._sessions_dir = path
+
     def clear(self) -> None:
         """Reset conversation history."""
         self._messages.clear()
@@ -132,9 +153,14 @@ class MiniClaudeAgent:
         if len(self._messages) <= MAX_MESSAGES_BEFORE_COMPACT:
             return
 
-        print(term.info("[compacting conversation...]"), flush=True)
         before = len(self._messages)
-        system = build_system_prompt(self._workspace_dir)
+
+        # Step 1: free in-memory truncation of old tool results
+        self._messages = micro_compact(self._messages, keep_recent=8)
+
+        # Step 2: LLM summarization to reduce message count
+        print(term.info("[compacting conversation...]"), flush=True)
+        system = build_system_prompt(self._workspace_dir, self._sessions_dir)
 
         self._messages = compact_messages(
             provider=self._provider,
@@ -146,6 +172,7 @@ class MiniClaudeAgent:
         after = len(self._messages)
         self.logger.compact(before, after)
         print(term.compact(before, after))
+        self.reload()  # rebuild prompt so the LLM sees the summary
 
     # ------------------------------------------------------------------
     # Tool execution

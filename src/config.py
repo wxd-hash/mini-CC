@@ -16,3 +16,6 @@ MAX_TOOL_ROUNDS: int = 20
 # Context compaction
 MAX_MESSAGES_BEFORE_COMPACT: int = 30
 KEEP_RECENT_MESSAGES: int = 10
+
+# Project memory
+MEMORY_MAX_CHARS: int = 6000
