@@ -1,4 +1,4 @@
-"""Anthropic API provider."""
+"""Anthropic API provider with streaming support."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ class AnthropicProvider(LLMProvider):
         return "anthropic"
 
     # ------------------------------------------------------------------
-    # Send
+    # Send (with streaming)
     # ------------------------------------------------------------------
 
     def send_message(
@@ -31,21 +31,23 @@ class AnthropicProvider(LLMProvider):
         tools: list[dict[str, Any]],
         max_tokens: int = 4096,
     ) -> LLMResponse:
-        response = self._client.messages.create(
+        with self._client.messages.stream(
             model=self.model,
             system=system_prompt,
             messages=messages,
             tools=tools,
             max_tokens=max_tokens,
-        )
+        ) as stream:
+            text_parts: list[str] = []
+            for delta in stream.text_stream:
+                text_parts.append(delta)
+                print(delta, end="", flush=True)
 
-        text_parts: list[str] = []
+            final = stream.get_final_message()
+
         tool_calls: list[ToolCall] = []
-
-        for b in response.content:
-            if b.type == "text":
-                text_parts.append(b.text)
-            elif b.type == "tool_use":
+        for b in final.content:
+            if b.type == "tool_use":
                 tool_calls.append(ToolCall(
                     id=b.id,
                     name=b.name,
@@ -53,9 +55,9 @@ class AnthropicProvider(LLMProvider):
                 ))
 
         return LLMResponse(
-            text="\n".join(text_parts),
+            text="".join(text_parts),
             tool_calls=tool_calls,
-            assistant_message={"role": "assistant", "content": response.content},
+            assistant_message={"role": "assistant", "content": final.content},
         )
 
     # ------------------------------------------------------------------
@@ -72,7 +74,6 @@ class AnthropicProvider(LLMProvider):
         self,
         items: list[tuple[str, str, str]],
     ) -> list[dict[str, Any]]:
-        """Anthropic: all tool results go into a single user-message."""
         blocks: list[dict[str, Any]] = []
         for tool_id, _name, content in items:
             blocks.append({
@@ -88,7 +89,7 @@ class AnthropicProvider(LLMProvider):
         )
 
     # ------------------------------------------------------------------
-    # Compaction
+    # Compaction (non-streaming — no terminal output needed)
     # ------------------------------------------------------------------
 
     def compact(

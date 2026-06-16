@@ -1,4 +1,4 @@
-"""OpenAI-compatible provider (DeepSeek, OpenAI, local models, ...)."""
+"""OpenAI-compatible provider (DeepSeek, etc.) with streaming support."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from src.llm.provider import LLMProvider, ToolCall, LLMResponse
 
 
 class OpenAIProvider(LLMProvider):
-    """LLM backend backed by any OpenAI-compatible API (DeepSeek, etc.)."""
+    """LLM backend backed by any OpenAI-compatible API."""
 
     def __init__(
         self,
@@ -30,7 +30,7 @@ class OpenAIProvider(LLMProvider):
         return "openai"
 
     # ------------------------------------------------------------------
-    # Send
+    # Send (with streaming)
     # ------------------------------------------------------------------
 
     def send_message(
@@ -40,23 +40,8 @@ class OpenAIProvider(LLMProvider):
         tools: list[dict[str, Any]],
         max_tokens: int = 4096,
     ) -> LLMResponse:
-        # Validate: every 'tool' message must follow an assistant with tool_calls.
-        # Strip orphaned tool messages (can happen after compaction).
-        last_tool_call_ids: set[str] = set()
-        clean: list[dict[str, Any]] = []
-        for m in messages:
-            role = m.get("role", "")
-            if role == "assistant" and m.get("tool_calls"):
-                ids = {tc["id"] for tc in m["tool_calls"]}
-                last_tool_call_ids = ids
-                clean.append(m)
-            elif role == "tool":
-                if m.get("tool_call_id") in last_tool_call_ids:
-                    clean.append(m)
-                # else: orphaned — skip it
-            else:
-                last_tool_call_ids = set()
-                clean.append(m)
+        # Validate: strip orphaned tool messages
+        clean = _validate_messages(messages)
 
         full_messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
@@ -68,45 +53,59 @@ class OpenAIProvider(LLMProvider):
             messages=full_messages,
             tools=tools,
             max_tokens=max_tokens,
+            stream=True,
         )
-        choice = response.choices[0]
-        msg = choice.message
 
-        text = msg.content or ""
+        text_parts: list[str] = []
+        tool_calls_acc: dict[int, dict[str, Any]] = {}
+
+        for chunk in response:
+            delta = chunk.choices[0].delta
+            if delta.content:
+                text_parts.append(delta.content)
+                print(delta.content, end="", flush=True)
+            if delta.tool_calls:
+                for tc_delta in delta.tool_calls:
+                    idx = tc_delta.index
+                    if idx not in tool_calls_acc:
+                        tool_calls_acc[idx] = {
+                            "id": tc_delta.id or "",
+                            "name": tc_delta.function.name if tc_delta.function else "",
+                            "arguments": "",
+                        }
+                    entry = tool_calls_acc[idx]
+                    if tc_delta.id:
+                        entry["id"] = tc_delta.id
+                    if tc_delta.function:
+                        if tc_delta.function.name:
+                            entry["name"] = tc_delta.function.name
+                        if tc_delta.function.arguments:
+                            entry["arguments"] += tc_delta.function.arguments
+
+        text = "".join(text_parts)
 
         tool_calls: list[ToolCall] = []
-        if msg.tool_calls:
-            for tc in msg.tool_calls:
-                try:
-                    args = json.loads(tc.function.arguments)
-                except json.JSONDecodeError:
-                    args = {}
-                tool_calls.append(ToolCall(
-                    id=tc.id,
-                    name=tc.function.name,
-                    arguments=args,
-                ))
+        for tc in sorted(tool_calls_acc.values(), key=lambda x: list(tool_calls_acc.keys())[list(tool_calls_acc.values()).index(x)]):
+            try:
+                args = json.loads(tc["arguments"])
+            except json.JSONDecodeError:
+                args = {}
+            tool_calls.append(ToolCall(id=tc["id"], name=tc["name"], arguments=args))
 
-        # Build assistant_message for history.  When tool_calls are present
-        # some providers (DeepSeek) require content to be null, not a string.
+        # Build assistant_message for history
         assistant_msg: dict[str, Any] = {"role": "assistant"}
-        if msg.tool_calls:
+        if tool_calls:
             assistant_msg["content"] = None
-        else:
-            assistant_msg["content"] = text or None
-
-        if msg.tool_calls:
             assistant_msg["tool_calls"] = [
                 {
                     "id": tc.id,
                     "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments,
-                    },
+                    "function": {"name": tc.name, "arguments": json.dumps(tc.arguments, ensure_ascii=False)},
                 }
-                for tc in msg.tool_calls
+                for tc in tool_calls
             ]
+        else:
+            assistant_msg["content"] = text or None
 
         return LLMResponse(
             text=text,
@@ -125,7 +124,6 @@ class OpenAIProvider(LLMProvider):
         self,
         items: list[tuple[str, str, str]],
     ) -> list[dict[str, Any]]:
-        """OpenAI: each tool result is its own ``role: tool`` message."""
         return [
             {"role": "tool", "tool_call_id": tid, "content": content}
             for tid, _name, content in items
@@ -137,7 +135,7 @@ class OpenAIProvider(LLMProvider):
         )
 
     # ------------------------------------------------------------------
-    # Compaction
+    # Compaction (non-streaming)
     # ------------------------------------------------------------------
 
     def compact(
@@ -161,3 +159,26 @@ class OpenAIProvider(LLMProvider):
 
     def tools_for_provider(self, registry: Any) -> list[dict[str, Any]]:
         return registry.to_openai()
+
+
+# ------------------------------------------------------------------
+# Message validation (shared)
+# ------------------------------------------------------------------
+
+def _validate_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Strip orphaned tool messages that lack a preceding assistant with tool_calls."""
+    last_tool_call_ids: set[str] = set()
+    clean: list[dict[str, Any]] = []
+    for m in messages:
+        role = m.get("role", "")
+        if role == "assistant" and m.get("tool_calls"):
+            ids = {tc["id"] for tc in m["tool_calls"]}
+            last_tool_call_ids = ids
+            clean.append(m)
+        elif role == "tool":
+            if m.get("tool_call_id") in last_tool_call_ids:
+                clean.append(m)
+        else:
+            last_tool_call_ids = set()
+            clean.append(m)
+    return clean
