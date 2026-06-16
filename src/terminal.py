@@ -14,7 +14,7 @@ import colorama
 colorama.init(autoreset=True)
 
 # ---------------------------------------------------------------------------
-# Raw ANSI codes (prefer the helper functions below)
+# Raw ANSI codes
 # ---------------------------------------------------------------------------
 
 _RESET = colorama.Style.RESET_ALL
@@ -22,7 +22,6 @@ _DIM = colorama.Style.DIM
 _BRIGHT = colorama.Style.BRIGHT
 _BOLD = "\033[1m"
 
-# Foreground
 _CYAN = colorama.Fore.CYAN
 _GREEN = colorama.Fore.GREEN
 _YELLOW = colorama.Fore.YELLOW
@@ -30,6 +29,19 @@ _RED = colorama.Fore.RED
 _MAGENTA = colorama.Fore.MAGENTA
 _WHITE = colorama.Fore.WHITE
 _LIGHT_BLACK = colorama.Fore.LIGHTBLACK_EX
+
+
+def set_no_color() -> None:
+    """Disable all ANSI styling — useful for CI logs or piping."""
+    global _RESET, _DIM, _BRIGHT, _BOLD
+    global _CYAN, _GREEN, _YELLOW, _RED, _MAGENTA, _WHITE, _LIGHT_BLACK
+    global _BOLD_GREEN
+    _RESET = _DIM = _BRIGHT = _BOLD = ""
+    _CYAN = _GREEN = _YELLOW = _RED = _MAGENTA = _WHITE = _LIGHT_BLACK = ""
+    _BOLD_GREEN = ""
+
+
+_BOLD_GREEN = f"{_BOLD}{_GREEN}"
 
 
 # ---------------------------------------------------------------------------
