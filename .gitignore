@@ -12,8 +12,9 @@ __pycache__/
 # Virtual environment
 .venv/
 
-# Session logs
-.sessions/
+# Session logs — keep directory, ignore data
+.sessions/*
+!.sessions/.gitkeep
 
 # Workspace (user project files)
 workspace/
