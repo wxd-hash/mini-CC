@@ -61,31 +61,28 @@ export DEEPSEEK_API_KEY="sk-..."
 ## Usage
 
 ```bash
-# Default (Anthropic, ask mode)
-python main.py
+# Default (DeepSeek, ask mode) — cd into your project first
+minicc
 
-# DeepSeek with streaming
-python main.py --provider deepseek
+# Use Anthropic instead
+minicc --provider anthropic
 
-# Point to a different project
-python main.py --workspace E:\my_project
+# Point to a different directory
+minicc --workspace E:\my_project
 
 # CI / pipe-friendly (no ANSI colors)
-python main.py --no-color
-
-# Global command (after pip install -e .)
-minicc --provider deepseek
+minicc --no-color
 ```
 
 ### CLI options
 
 | Flag | Default | Description |
 |---|---|---|
-| `--provider anthropic\|deepseek` | `anthropic` | LLM provider |
+| `--provider anthropic\|deepseek` | `deepseek` | LLM provider |
 | `--model MODEL` | provider default | Override model name |
 | `--api-key KEY` | env var | API key |
 | `--api-base URL` | DeepSeek official | API base URL (DeepSeek only) |
-| `--workspace PATH` | `./workspace` | Workspace root directory |
+| `--workspace PATH` | `.` (cwd) | Workspace root directory |
 | `--log-dir PATH` | `./.sessions` | Session log directory |
 | `--mode plan\|ask\|auto` | `ask` | Permission mode |
 | `--max-rounds N` | `20` | Max tool-call rounds per user turn |
@@ -115,7 +112,7 @@ The permission menu supports keyboard navigation: `↑↓` / `ws` / `jk` to move
 
 High-risk shell commands: `rm`, `sudo`, `curl`, `wget`, `ssh`, `scp`, `chmod`, `chown`, `git push`, `pip install`, `npm install`.
 
-"Don't ask again" auto-allows the tool for the rest of the session except for high-risk commands (always prompt). Permission state never persists between sessions.
+"Don't ask again" auto-allows the tool for the rest of the **current turn** (one user message + its tool chain). Permission resets at the start of each new user input.
 
 ## Tools
 
@@ -191,7 +188,9 @@ No setup required — the system prompt instructs the LLM to read and update the
 ```
 mini-claude-code/
 ├── main.py                      # Entry point (CLI parsing only)
-├── test_all.py                  # 37 self-tests (no API key needed)
+├── test_all.py                  # 40 self-tests (no API key needed)
+├── src/
+│   ├── entry.py                 # Console-script wrapper for 'minicc' command
 ├── pyproject.toml
 ├── requirements.txt
 ├── README.md
@@ -235,10 +234,10 @@ mini-claude-code/
 ## Quick test
 
 ```bash
-# Run all 37 unit tests (no API key required)
+# Run all 40 unit tests (no API key required)
 python test_all.py
 
 # Demo: fix a bug with the agent
-python main.py --provider deepseek
+minicc
 > Run the tests and fix any failures
 ```
