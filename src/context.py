@@ -65,8 +65,15 @@ def load_project_instructions(workspace_dir: Path) -> str:
             seen.add(key)
             try:
                 content = path.read_text(encoding="utf-8")
-            except OSError:
-                continue
+            except (OSError, ValueError):
+                # Binary or non-UTF-8 encoding — try system locale
+                try:
+                    content = path.read_text(encoding="gbk")
+                except (OSError, ValueError):
+                    try:
+                        content = path.read_text(encoding="utf-8", errors="replace")
+                    except OSError:
+                        continue
             if len(content) > MAX_INSTRUCTIONS_CHARS:
                 content = content[:MAX_INSTRUCTIONS_CHARS] + (
                     f"\n\n... [truncated at {MAX_INSTRUCTIONS_CHARS} chars]"

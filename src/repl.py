@@ -32,7 +32,7 @@ def print_banner(provider, logger, workspace, permission) -> None:
         term.bold("Mini Claude Code"),
         hr_fixed,
         term.banner_line("Provider", f"{provider.provider_name}  ({provider.model})"),
-        term.banner_line("Session", str(logger.path)),
+        term.banner_line("Session", logger.path.name),
         term.banner_line("Workspace", str(workspace.root)),
         term.banner_line("Mode", permission.mode.value),
         hr_fixed,

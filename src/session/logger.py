@@ -177,12 +177,40 @@ def list_sessions(sessions_dir: Path, workspace: str = "") -> list[tuple[Path, s
         name = _session_name(f)
         if name == "(empty)":
             cleanup_empty(f)
-            continue  # skip empty sessions
-        stat = f.stat()
-        ts = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).strftime("%m-%d %H:%M")
+            continue
+        ts = _session_last_ts(f) or _session_file_ts(f)
         result.append((f, name, ts))
     result.sort(key=lambda x: x[0].stat().st_mtime, reverse=True)
     return result
+
+
+def _session_last_ts(path: Path) -> str | None:
+    """Extract the last event timestamp from a session file."""
+    last_ts: str | None = None
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    ev = json.loads(line.strip())
+                    last_ts = ev.get("ts", last_ts)
+                except json.JSONDecodeError:
+                    continue
+    except Exception:
+        pass
+    if last_ts:
+        try:
+            dt = datetime.fromisoformat(last_ts)
+            return dt.astimezone().strftime("%m-%d %H:%M")
+        except (ValueError, OSError):
+            pass
+    return None
+
+
+def _session_file_ts(path: Path) -> str:
+    """Fallback: use file modification time."""
+    ts = path.stat().st_mtime
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc).astimezone()
+    return dt.strftime("%m-%d %H:%M")
 
 
 def _session_name(path: Path) -> str:
