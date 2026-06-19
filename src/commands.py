@@ -29,19 +29,16 @@ def do_resume(agent: MiniClaudeAgent, log_dir: Path, workspace: str, resume_arg:
             print()
             return
 
-        if len(sessions) == 1:
-            session_path = sessions[0][0]
-        else:
-            print(term.bold("Select a session to resume:"))
-            print(term.hr())
-            options = [f"{name:<50} {ts}" for _, name, ts in sessions]
-            options.append("(start fresh)")
-            idx = term.select_menu(options)
-            if idx < 0 or idx == len(sessions):
-                print(term.info("Starting fresh."))
-                print()
-                return
-            session_path = sessions[idx][0]
+        print(term.bold("Select a session to resume:"))
+        print(term.hr())
+        options = [f"{name:<50} {ts}" for _, name, ts in sessions]
+        options.append("(start fresh)")
+        idx = term.select_menu(options)
+        if idx < 0 or idx == len(sessions):
+            print(term.info("Starting fresh."))
+            print()
+            return
+        session_path = sessions[idx][0]
     else:
         session_path = Path(resume_arg)
         if not session_path.is_file():
