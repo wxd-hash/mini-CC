@@ -30,7 +30,10 @@ def main() -> None:
     if args.no_color:
         from src import terminal as term
         term.set_no_color()
-    run(args)
+    try:
+        run(args)
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":
