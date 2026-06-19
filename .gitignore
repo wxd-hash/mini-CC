@@ -9,6 +9,9 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Package metadata
+*.egg-info/
+
 # Virtual environment
 .venv/
 
