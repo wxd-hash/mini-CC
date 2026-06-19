@@ -5,7 +5,7 @@ from pathlib import Path
 WORKSPACE_DIR: Path = Path.cwd() / "workspace"
 
 # LLM
-PROVIDER: str = "anthropic"              # "anthropic" or "deepseek"
+PROVIDER: str = "deepseek"               # "anthropic" or "deepseek"
 MODEL_ANTHROPIC: str = "claude-sonnet-4-5"
 MODEL_DEEPSEEK: str = "deepseek-chat"
 DEEPSEEK_API_BASE: str = "https://api.deepseek.com/v1"

@@ -39,6 +39,21 @@ MAX_INSTRUCTIONS_CHARS = 8000
 MEMORY_MAX_CHARS = 6000
 
 
+def _read_text_safe(path: Path) -> str | None:
+    """Read a file trying UTF-8 first, then GBK, then UTF-8 replace.
+    Returns ``None`` if the file cannot be read at all.
+    """
+    for enc in ("utf-8", "gbk"):
+        try:
+            return path.read_text(encoding=enc)
+        except (OSError, ValueError):
+            continue
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -63,17 +78,9 @@ def load_project_instructions(workspace_dir: Path) -> str:
             if not path.is_file() or key in seen:
                 continue
             seen.add(key)
-            try:
-                content = path.read_text(encoding="utf-8")
-            except (OSError, ValueError):
-                # Binary or non-UTF-8 encoding — try system locale
-                try:
-                    content = path.read_text(encoding="gbk")
-                except (OSError, ValueError):
-                    try:
-                        content = path.read_text(encoding="utf-8", errors="replace")
-                    except OSError:
-                        continue
+            content = _read_text_safe(path)
+            if content is None:
+                continue
             if len(content) > MAX_INSTRUCTIONS_CHARS:
                 content = content[:MAX_INSTRUCTIONS_CHARS] + (
                     f"\n\n... [truncated at {MAX_INSTRUCTIONS_CHARS} chars]"
@@ -102,9 +109,8 @@ def load_memory(workspace_dir: Path, sessions_dir: Path | None = None) -> str:
     memory_path = sessions_dir / ws_name / "memory.md"
     if not memory_path.is_file():
         return ""
-    try:
-        content = memory_path.read_text(encoding="utf-8")
-    except OSError:
+    content = _read_text_safe(memory_path)
+    if content is None:
         return ""
     if len(content) > MEMORY_MAX_CHARS:
         content = content[:MEMORY_MAX_CHARS] + "\n... [truncated]"
