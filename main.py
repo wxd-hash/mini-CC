@@ -8,7 +8,7 @@ from src.config import PROVIDER
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Mini Claude Code")
-    parser.add_argument("--workspace", type=Path, default=Path.cwd() / "workspace")
+    parser.add_argument("--workspace", type=Path, default=Path.cwd())
     parser.add_argument("--log-dir", type=Path, default=Path.cwd() / ".sessions")
     parser.add_argument("--mode", type=str, choices=["plan", "ask", "auto"], default="ask",
                         help="Permission mode (default: ask)")

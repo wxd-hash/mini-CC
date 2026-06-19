@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-WORKSPACE_DIR: Path = Path.cwd() / "workspace"
+WORKSPACE_DIR: Path = Path.cwd()
 
 # LLM
 PROVIDER: str = "deepseek"               # "anthropic" or "deepseek"
