@@ -110,7 +110,11 @@ def run_repl(
             agent.reload()
             continue
 
-        agent.run(stripped)
+        try:
+            agent.run(stripped)
+        except KeyboardInterrupt:
+            print()
+            continue
 
     # Clean up the input box on exit
     print("\033[2K\033[1A\033[2K\033[1A\033[2K", end="")
