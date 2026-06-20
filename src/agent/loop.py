@@ -41,6 +41,7 @@ class MiniClaudeAgent:
         self.MAX_CONSECUTIVE_ERRORS = 5
         self._read_results: dict[str, dict[str, int]] = {}  # tool_name → hash → count
         self.MAX_STALE_READS = 3
+        self._consecutive_strikes = 0  # progressive intervention counter
 
     # ------------------------------------------------------------------
     # Public API
@@ -191,6 +192,8 @@ class MiniClaudeAgent:
     ) -> tuple[list[dict[str, Any]], str | None]:
         items: list[tuple[str, str, str]] = []
         all_denied = True
+        stuck_detected = False
+        stuck_tool_name = ""
 
         for tc in response.tool_calls:
             import json as _json
@@ -198,16 +201,10 @@ class MiniClaudeAgent:
             self._last_tool_calls.append(call_key)
             recent = self._last_tool_calls[-5:]
             if recent.count(call_key) >= 3:
+                stuck_detected = True
+                stuck_tool_name = tc.name
                 self._last_tool_calls.clear()
-                abort_msg = (
-                    f"Stopped: {tc.name} was called 3 times with identical "
-                    "arguments. Analyze the results and try a different approach."
-                )
-                for pending_tc in response.tool_calls:
-                    items.append((pending_tc.id, pending_tc.name, abort_msg))
-                print(term.error(abort_msg))
-                tool_msgs = self._provider.make_tool_result_messages(items)
-                return tool_msgs, abort_msg
+                break  # stop processing tools, go to intervention
 
             self.logger.tool_use(tc.name, tc.arguments)
             print(term.tool_header(tc.name, self._fmt_params(tc.arguments)))
@@ -226,14 +223,56 @@ class MiniClaudeAgent:
                 self._consecutive_errors = 0
                 abort_msg = (
                     f"Aborting: {self.MAX_CONSECUTIVE_ERRORS} consecutive "
-                    "tool failures. Check the error pattern and fix the root cause "
-                    "before retrying."
+                    "tool failures. Check the error pattern and fix the root cause."
                 )
                 print(term.error(abort_msg))
                 tool_msgs = self._provider.make_tool_result_messages(items)
                 return tool_msgs, abort_msg
 
         print()
+
+        # --- Progressive intervention for stuck loops ---
+        if stuck_detected:
+            self._consecutive_strikes += 1
+
+            if self._consecutive_strikes == 1:
+                warning = (
+                    f"WARNING: {stuck_tool_name} was called 3 times with "
+                    "identical arguments. The results haven't changed. "
+                    "Consider a different approach."
+                )
+                items.append(("strike1", stuck_tool_name, warning))
+                print(term.info(warning))
+                tool_msgs = self._provider.make_tool_result_messages(items)
+                return tool_msgs, None  # continue loop, LLM sees warning
+
+            if self._consecutive_strikes == 2:
+                print(term.info("[stuck — forcing reflection]"))
+                reflect_text = (
+                    "You are stuck in a loop. Before continuing, answer these:\n"
+                    "1. What approaches have you tried so far?\n"
+                    "2. What did each attempt teach you?\n"
+                    "3. What is a DIFFERENT approach you haven't tried yet?\n"
+                    "4. Explain your new plan, then execute it.\n\n"
+                    "Do NOT repeat any approach that has already failed."
+                )
+                items.append(("strike2", stuck_tool_name, reflect_text))
+                tool_msgs = self._provider.make_tool_result_messages(items)
+                return tool_msgs, None  # continue loop, LLM sees reflection prompt
+
+            # Level 3: hard abort
+            self._consecutive_strikes = 0
+            abort_msg = (
+                f"Task stopped after 3 repeated patterns. "
+                "Too many approaches failed. Please re-state your goal."
+            )
+            items.append(("strike3", stuck_tool_name, abort_msg))
+            print(term.error(abort_msg))
+            tool_msgs = self._provider.make_tool_result_messages(items)
+            return tool_msgs, abort_msg  # abort → end turn
+
+        # No loop detected → reset counter
+        self._consecutive_strikes = 0
 
         tool_msgs = self._provider.make_tool_result_messages(items)
 
