@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,7 @@ class MiniClaudeAgent:
         self._sessions_dir: Path | None = None
         self._messages: list[dict[str, Any]] = []
         self._cached_prompt: str | None = None
+        self._last_tool_calls: list[tuple[str, str]] = []  # (name, json_args)
 
     # ------------------------------------------------------------------
     # Public API
@@ -186,6 +188,22 @@ class MiniClaudeAgent:
         all_denied = True
 
         for tc in response.tool_calls:
+            import json as _json
+            call_key = (tc.name, _json.dumps(tc.arguments, sort_keys=True))
+            self._last_tool_calls.append(call_key)
+            recent = self._last_tool_calls[-5:]
+            if recent.count(call_key) >= 3:
+                self._last_tool_calls.clear()
+                abort_msg = (
+                    f"Stopped: {tc.name} was called 3 times with identical "
+                    "arguments. Analyze the results and try a different approach."
+                )
+                for pending_tc in response.tool_calls:
+                    items.append((pending_tc.id, pending_tc.name, abort_msg))
+                print(term.error(abort_msg))
+                tool_msgs = self._provider.make_tool_result_messages(items)
+                return tool_msgs, abort_msg
+
             self.logger.tool_use(tc.name, tc.arguments)
             print(term.tool_header(tc.name, self._fmt_params(tc.arguments)))
 
