@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,8 @@ class MiniClaudeAgent:
         self._last_tool_calls: list[tuple[str, str]] = []  # (name, json_args)
         self._consecutive_errors = 0
         self.MAX_CONSECUTIVE_ERRORS = 5
+        self._read_results: dict[str, dict[str, int]] = {}  # tool_name → hash → count
+        self.MAX_STALE_READS = 3
 
     # ------------------------------------------------------------------
     # Public API
@@ -245,6 +248,20 @@ class MiniClaudeAgent:
             result = tool.run(params)
             self._consecutive_errors = 0  # reset on success
             self.logger.tool_result(name, result)
+
+            # Stale-read detection: warn if same content returned repeatedly
+            if name in ("read_file", "search_files", "git_diff"):
+                h = hashlib.sha256(result[:2000].encode()).hexdigest()
+                counts = self._read_results.setdefault(name, {})
+                counts[h] = counts.get(h, 0) + 1
+                if counts[h] >= self.MAX_STALE_READS:
+                    return (
+                        f"WARNING: {name} has returned the same content "
+                        f"{self.MAX_STALE_READS} times. You are re-reading "
+                        f"unchanged data. Stop reading and act on what you "
+                        f"already know.\n\n{result}"
+                    )
+
             return result
         except Exception as exc:
             self._consecutive_errors += 1
