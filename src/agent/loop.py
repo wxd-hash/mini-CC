@@ -219,15 +219,40 @@ class MiniClaudeAgent:
             print(term.tool_result(f"→ {self._truncate(result, 300)}"))
             items.append((tc.id, tc.name, result))
 
-            if self._consecutive_errors >= self.MAX_CONSECUTIVE_ERRORS:
+            err_count = self._consecutive_errors
+            if err_count >= self.MAX_CONSECUTIVE_ERRORS:
                 self._consecutive_errors = 0
                 abort_msg = (
-                    f"Aborting: {self.MAX_CONSECUTIVE_ERRORS} consecutive "
-                    "tool failures. Check the error pattern and fix the root cause."
+                    f"Aborting: {err_count} consecutive tool failures. "
+                    "Check the error pattern and fix the root cause."
                 )
                 print(term.error(abort_msg))
                 tool_msgs = self._provider.make_tool_result_messages(items)
                 return tool_msgs, abort_msg
+
+            if err_count == 3:
+                warning = (
+                    "WARNING: 3 consecutive tool calls have failed. "
+                    "Stop retrying. Analyze what each error means and "
+                    "choose a different approach."
+                )
+                items.append(("err_warn", tc.name, warning))
+                print(term.info(warning))
+                tool_msgs = self._provider.make_tool_result_messages(items)
+                return tool_msgs, None  # continue, LLM sees warning
+
+            if err_count == 4:
+                print(term.info("[consecutive failures — forcing reflection]"))
+                reflect_text = (
+                    "4 tool calls in a row have failed. Answer these:\n"
+                    "1. What exact errors are you getting?\n"
+                    "2. What is the root cause of these errors?\n"
+                    "3. What can you change to avoid all of them?\n"
+                    "Explain your fix, then execute it."
+                )
+                items.append(("err_reflect", tc.name, reflect_text))
+                tool_msgs = self._provider.make_tool_result_messages(items)
+                return tool_msgs, None  # continue, LLM sees reflection prompt
 
         print()
 
