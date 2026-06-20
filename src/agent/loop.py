@@ -36,6 +36,8 @@ class MiniClaudeAgent:
         self._messages: list[dict[str, Any]] = []
         self._cached_prompt: str | None = None
         self._last_tool_calls: list[tuple[str, str]] = []  # (name, json_args)
+        self._consecutive_errors = 0
+        self.MAX_CONSECUTIVE_ERRORS = 5
 
     # ------------------------------------------------------------------
     # Public API
@@ -217,6 +219,17 @@ class MiniClaudeAgent:
             print(term.tool_result(f"→ {self._truncate(result, 300)}"))
             items.append((tc.id, tc.name, result))
 
+            if self._consecutive_errors >= self.MAX_CONSECUTIVE_ERRORS:
+                self._consecutive_errors = 0
+                abort_msg = (
+                    f"Aborting: {self.MAX_CONSECUTIVE_ERRORS} consecutive "
+                    "tool failures. Check the error pattern and fix the root cause "
+                    "before retrying."
+                )
+                print(term.error(abort_msg))
+                tool_msgs = self._provider.make_tool_result_messages(items)
+                return tool_msgs, abort_msg
+
         print()
 
         tool_msgs = self._provider.make_tool_result_messages(items)
@@ -230,9 +243,11 @@ class MiniClaudeAgent:
         try:
             tool = self.tool_registry.get_tool(name)
             result = tool.run(params)
+            self._consecutive_errors = 0  # reset on success
             self.logger.tool_result(name, result)
             return result
         except Exception as exc:
+            self._consecutive_errors += 1
             error_msg = f"Tool error: {exc}"
             self.logger.error(error_msg)
             return error_msg
