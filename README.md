@@ -8,6 +8,7 @@ A minimal CLI coding agent powered by Claude or DeepSeek. Built in Python with z
 
 - **Streaming output** — responses appear character-by-character in real time, no waiting for full generation
 - **Agent Loop** — user input → LLM → tool calls → loop → final answer (20 rounds by default, configurable via `--max-rounds`)
+- **Loop detection** — 3-level progressive intervention: same-tool-same-args detection, consecutive error fuse, stale-read content hashing; warns → forces reflection → hard-aborts only as last resort
 - **6 tools** — read_file, write_file, list_files, search_files, git_diff, run_shell
 - **Dual LLM backend** — Anthropic Claude + DeepSeek (OpenAI-compatible) via clean provider abstraction
 - **Permission system** — 3 modes (plan / ask / auto) with interactive keyboard menu and high-risk command detection
