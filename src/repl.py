@@ -88,67 +88,64 @@ def run_repl(
         workspace = str(Path.cwd())
 
     first = True
-    last_ctrlc = 0.0  # double-press tracking
+    last_ctrlc = 0.0
 
     while True:
-        if not first:
-            print(term.hr(), flush=True)
-        first = False
-
-        # Read input (Ctrl+C here triggers double-press exit)
         try:
-            line = term.readline(_prompt())
-        except (EOFError, KeyboardInterrupt):
-            now = time.monotonic()
-            if now - last_ctrlc <= DOUBLE_PRESS_SECONDS:
-                print("\nGoodbye.")
-                break
-            last_ctrlc = now
-            print(f"\n{term._YELLOW}Press Ctrl+C again to exit{term._RESET}")
-            first = True
-            continue
+            if not first:
+                print(term.hr(), flush=True)
+            first = False
 
-        # Reset double-press timer on normal input
-        last_ctrlc = 0.0
-        stripped = line.strip()
-        if not stripped:
-            continue
+            # Read input (Ctrl+C here triggers double-press exit)
+            try:
+                line = term.readline(_prompt())
+            except (EOFError, KeyboardInterrupt):
+                now = time.monotonic()
+                if now - last_ctrlc <= DOUBLE_PRESS_SECONDS:
+                    print("\nGoodbye.")
+                    break
+                last_ctrlc = now
+                print(f"\n{term._YELLOW}Press Ctrl+C again to exit{term._RESET}")
+                first = True
+                continue
 
-        # Slash commands
-        if stripped.startswith("/"):
-            parts = stripped[1:].split(maxsplit=1)
-            cmd_name = parts[0].lower()
-            cmd_args = parts[1] if len(parts) > 1 else ""
+            last_ctrlc = 0.0
+            stripped = line.strip()
+            if not stripped:
+                continue
 
-            if cmd_name in ("exit", "quit"):
-                break
+            # Slash commands
+            if stripped.startswith("/"):
+                parts = stripped[1:].split(maxsplit=1)
+                cmd_name = parts[0].lower()
+                cmd_args = parts[1] if len(parts) > 1 else ""
 
-            if cmd_name == "resume":
-                resume_arg = True if not cmd_args else cmd_args
-                try:
+                if cmd_name in ("exit", "quit"):
+                    break
+
+                if cmd_name == "resume":
+                    resume_arg = True if not cmd_args else cmd_args
                     do_resume(engine, log_dir, workspace, resume_arg)
-                except KeyboardInterrupt:
-                    print()
                     continue
+
+                if handle_command(
+                    cmd_name, cmd_args,
+                    engine=engine, registry=registry, permission=permission,
+                    log_dir=log_dir, workspace=workspace, session_store=session_store,
+                ):
+                    continue
+
+                print(term.info(f"Unknown command: /{cmd_name}"))
                 continue
 
-            if handle_command(
-                cmd_name, cmd_args,
-                engine=engine, registry=registry, permission=permission,
-                log_dir=log_dir, workspace=workspace, session_store=session_store,
-            ):
-                continue
-
-            print(term.info(f"Unknown command: /{cmd_name}"))
-            continue
-
-        # Normal query
-        try:
+            # Normal query
             engine.run(stripped)
         except (KeyboardInterrupt, AbortedError):
             print()
             print(term.info("Turn cancelled."))
             continue
+        except EOFError:
+            break
         except Exception:
             print()
             print(term.error("Engine crashed — but I'm still alive. Try again."))
