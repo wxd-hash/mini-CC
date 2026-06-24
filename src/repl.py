@@ -103,9 +103,8 @@ def run_repl(
             except (EOFError, KeyboardInterrupt):
                 now = time.monotonic()
                 if now - last_ctrlc <= DOUBLE_PRESS_SECONDS:
-                    running = False
                     print("\nGoodbye.")
-                    continue
+                    return
                 last_ctrlc = now
                 print(f"\n{term._YELLOW}Press Ctrl+C again to exit{term._RESET}")
                 first = True
@@ -123,8 +122,7 @@ def run_repl(
                 cmd_args = parts[1] if len(parts) > 1 else ""
 
                 if cmd_name in ("exit", "quit"):
-                    running = False
-                    continue
+                    return  # exit immediately, bypass all exception handlers
 
                 if cmd_name == "resume":
                     do_resume(engine, log_dir, workspace,
@@ -148,8 +146,7 @@ def run_repl(
             print(term.info("Turn cancelled."))
             continue
         except EOFError:
-            running = False
-            continue
+            return
         except Exception:
             print()
             print(term.error("Engine crashed — but I'm still alive. Try again."))
