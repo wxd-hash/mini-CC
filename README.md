@@ -29,6 +29,9 @@
 # 一行安装（需要 Python 3.12+）
 pip install git+https://github.com/wxd-hash/mini-CC.git
 
+# 如果报错 ModuleNotFoundError: No module named 'src'，用这条：
+pip install --force-reinstall --no-cache-dir git+https://github.com/wxd-hash/mini-CC.git
+
 # 设置 API key
 # Windows PowerShell（永久）：
 [Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "sk-你的key", "User")
