@@ -1,7 +1,4 @@
-"""Terminal REPL — banner, prompt, input loop, slash-command routing.
-
-Enhanced with cc-mini features: auto-compact, skill commands, history listing.
-"""
+"""Terminal REPL — banner, prompt, input loop, slash-command routing."""
 
 from __future__ import annotations
 
@@ -12,26 +9,20 @@ from pathlib import Path
 from src import terminal as term
 from src.agent.loop import AbortedError
 from src.security.permission import PermissionChecker
-
-# Matches claude-code useDoublePress DOUBLE_PRESS_TIMEOUT_MS = 800
-_DOUBLE_PRESS_MS = 0.8
 from src.tools.registry import ToolRegistry
 
 
-# ---------------------------------------------------------------------------
-# Banner
-# ---------------------------------------------------------------------------
-
-_CAT = [
-    r"    /\_/\    ",
-    r"   ( o.o )   ",
-    r"    > ^ <    ",
-    r"   meow~     ",
-]
+# Double-press timeout (matches claude-code's DOUBLE_PRESS_TIMEOUT_MS = 800)
+DOUBLE_PRESS_SECONDS = 0.8
 
 
-def print_banner(provider, logger, workspace, permission) -> None:
-    cat = list(_CAT)
+def print_banner(provider, session_store, workspace, permission) -> None:
+    cat = [
+        r"    /\_/\    ",
+        r"   ( o.o )   ",
+        r"    > ^ <    ",
+        r"   meow~     ",
+    ]
     cat_w = max(len(c) for c in cat)
 
     hr_fixed = term.hr_fixed(50)
@@ -39,11 +30,14 @@ def print_banner(provider, logger, workspace, permission) -> None:
         term.bold("Mini Claude Code"),
         hr_fixed,
         term.banner_line("Provider", f"{provider.provider_name}  ({provider.model})"),
-        term.banner_line("Session", logger.path.name if hasattr(logger, 'path') else str(logger.session_id)[:16]),
+        term.banner_line("Session", getattr(session_store, 'session_id', '?')[:16]
+                         if hasattr(session_store, 'session_id') else
+                         getattr(session_store, 'path', '?').name[:16]
+                         if hasattr(session_store, 'path') else '?'),
         term.banner_line("Workspace", str(workspace.root)),
         term.banner_line("Mode", permission.mode.value),
         hr_fixed,
-        term.info("/tools  /tool  /perm  /skills  /history  /clear  /reload  /exit"),
+        term.info("/tools  /perm  /skills  /history  /clear  /reload  /exit"),
     ]
 
     while len(cat) < len(info):
@@ -58,10 +52,6 @@ def print_banner(provider, logger, workspace, permission) -> None:
     print(term.hr())
 
 
-# ---------------------------------------------------------------------------
-# REPL
-# ---------------------------------------------------------------------------
-
 def run_repl(
     registry: ToolRegistry,
     permission: PermissionChecker,
@@ -70,19 +60,27 @@ def run_repl(
     workspace: str = "",
     session_store: Any = None,
 ) -> None:
-    """Interactive REPL loop with slash-command routing."""
+    """Interactive REPL. Double-press Ctrl+C to exit (matches claude-code).
+
+    Flow:
+      - Ctrl+C once during engine.run() → cancel turn, back to prompt
+      - Ctrl+C once at empty prompt → "Press again to exit"
+      - Ctrl+C twice quickly → exit
+    """
     from src.commands import handle_command, do_resume
 
     _mode_names = {"plan": "PLAN", "ask": "ASK", "auto": "AUTO"}
+    _mode_colors = {
+        "plan": term._YELLOW,
+        "ask": term._CYAN,
+        "auto": term._GREEN,
+    }
 
     def _prompt() -> str:
         m = permission.mode.value
-        label = f"{_mode_names.get(m, m)} >"
-        if m == "plan":
-            return f"  {term._YELLOW}{_mode_names.get(m, m)}{term._RESET} {term._BOLD_GREEN}>{term._RESET}  "
-        if m == "auto":
-            return f"  {term._GREEN}{_mode_names.get(m, m)}{term._RESET} {term._BOLD_GREEN}>{term._RESET}  "
-        return f"  {term._CYAN}{_mode_names.get(m, m)}{term._RESET} {term._BOLD_GREEN}>{term._RESET}  "
+        label = _mode_names.get(m, m)
+        color = _mode_colors.get(m, "")
+        return f"  {color}{label}{term._RESET} {term._BOLD_GREEN}>{term._RESET}  "
 
     if log_dir is None:
         log_dir = Path.cwd() / ".sessions"
@@ -90,17 +88,28 @@ def run_repl(
         workspace = str(Path.cwd())
 
     first = True
+    last_ctrlc = 0.0  # double-press tracking
+
     while True:
         if not first:
             print(term.hr(), flush=True)
         first = False
+
+        # Read input (Ctrl+C here triggers double-press exit)
         try:
             line = term.readline(_prompt())
         except (EOFError, KeyboardInterrupt):
-            print()
-            break
-        print()
+            now = time.monotonic()
+            if now - last_ctrlc <= DOUBLE_PRESS_SECONDS:
+                print("\nGoodbye.")
+                break
+            last_ctrlc = now
+            print(f"\n{term._YELLOW}Press Ctrl+C again to exit{term._RESET}")
+            first = True
+            continue
 
+        # Reset double-press timer on normal input
+        last_ctrlc = 0.0
         stripped = line.strip()
         if not stripped:
             continue
@@ -116,35 +125,35 @@ def run_repl(
 
             if cmd_name == "resume":
                 resume_arg = True if not cmd_args else cmd_args
-                do_resume(engine, log_dir, workspace, resume_arg)
+                try:
+                    do_resume(engine, log_dir, workspace, resume_arg)
+                except KeyboardInterrupt:
+                    print()
+                    continue
                 continue
 
             if handle_command(
                 cmd_name, cmd_args,
-                engine=engine,
-                registry=registry,
-                permission=permission,
-                log_dir=log_dir,
-                workspace=workspace,
-                session_store=session_store,
+                engine=engine, registry=registry, permission=permission,
+                log_dir=log_dir, workspace=workspace, session_store=session_store,
             ):
                 continue
 
-            print(term.info(f"Unknown command: /{cmd_name}. Type /help or see available commands."))
+            print(term.info(f"Unknown command: /{cmd_name}"))
             continue
 
-        # Normal query → submit to engine
+        # Normal query
         try:
             engine.run(stripped)
         except (KeyboardInterrupt, AbortedError):
             print()
             print(term.info("Turn cancelled."))
             continue
-        except Exception as e:
+        except Exception:
             print()
-            print(term.error(f"Engine error (recovered): {e}"))
-            print(term.info("The agent is still alive. You can continue."))
+            print(term.error("Engine crashed — but I'm still alive. Try again."))
             continue
 
+    # Clean up on exit
     print("\033[2K\033[1A\033[2K\033[1A\033[2K", end="")
     sys.stdout.flush()
