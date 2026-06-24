@@ -563,3 +563,54 @@ minicc:
 | 强制终止 | 300 轮 |
 | 压缩阈值 | 上下文窗口 × 80% |
 | 测试覆盖率 | 18 个测试用例 |
+| Docker 镜像 | ~400MB |
+
+---
+
+## 十七、Docker 部署
+
+minicc 提供了完整的 Docker 支持，可以在 Linux 容器中运行，无需本地安装 Python。
+
+### 17.1 镜像说明
+
+基于 `python:3.12-slim`，安装了 git、ripgrep。以非 root 用户 `coder` 运行。
+
+关键路径：
+- `/home/coder/workspace` — 挂载的工作目录
+- `/home/coder/.config/mini-claude/memory` — 持久记忆（volume）
+- `/app` — minicc 源码和安装位置
+
+### 17.2 使用方式
+
+```bash
+# 构建
+docker build -t minicc .
+
+# 交互模式
+docker run -it --rm \
+  -v "$(pwd):/home/coder/workspace" \
+  -e DEEPSEEK_API_KEY="sk-..." \
+  minicc
+
+# 一行命令
+docker run --rm \
+  -v "$(pwd):/home/coder/workspace" \
+  -e DEEPSEEK_API_KEY="sk-..." \
+  minicc "跑一下这个项目的测试"
+
+# docker-compose
+echo "DEEPSEEK_API_KEY=sk-..." > .env
+docker compose run --rm minicc
+```
+
+### 17.3 容器内的工具
+
+| 工具 | 版本 | 说明 |
+|------|------|------|
+| Python | 3.12 | 解释器 |
+| git | 最新 | 版本控制，git diff 等 |
+| ripgrep | 14.x | 加速 search_files |
+| anthropic SDK | 最新 | 调用 Claude |
+| openai SDK | 最新 | 调用 DeepSeek |
+
+容器已通过 `sandbox ok` 路径沙箱验证，所有文件操作限制在 `/home/coder/workspace` 内。

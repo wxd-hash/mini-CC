@@ -1,4 +1,4 @@
-FROM python:3.14-slim
+FROM python:3.12-slim
 
 LABEL description="Mini Claude Code - 轻量级终端编程助手"
 
@@ -25,6 +25,8 @@ RUN mkdir -p /home/coder/workspace \
     /home/coder/.config/mini-claude/memory \
     /home/coder/.config/mini-claude/sessions \
     && chown -R coder:coder /home/coder /app
+
+ENV PYTHONPATH=/app
 
 USER coder
 WORKDIR /home/coder/workspace

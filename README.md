@@ -275,6 +275,8 @@ mini-claude-code/
 
 ## Docker 运行
 
+已内置 git + ripgrep，非 root 用户运行，所有文件操作在挂载的 workspace 目录内。
+
 ```bash
 # 构建镜像
 docker build -t minicc .
@@ -285,12 +287,17 @@ docker run -it --rm \
   -e DEEPSEEK_API_KEY="sk-..." \
   minicc
 
-# 或使用 docker-compose
-echo 'DEEPSEEK_API_KEY=sk-...' > .env
+# 非交互一行命令
+docker run --rm \
+  -v "$(pwd):/home/coder/workspace" \
+  -e DEEPSEEK_API_KEY="sk-..." \
+  minicc "项目里有哪些测试文件？"
+
+# 或用 docker-compose（先创建 .env 放 API key）
 docker compose run --rm minicc
 ```
 
-Docker 中已内置 git + ripgrep，所有文件操作在挂载的 workspace 目录内。
+## 安装（本地 Python）
 
 ## 快速测试
 
