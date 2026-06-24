@@ -43,38 +43,16 @@ minicc "帮我创建 hello.py"
 
 ### 方式二：Docker（无需 Python）
 
-```powershell
-# 把包装脚本复制到 PATH
-mkdir "$env:USERPROFILE\AppData\Local\minicc-bin" -Force
-cp docker-minicc.ps1 "$env:USERPROFILE\AppData\Local\minicc-bin\minicc.ps1"
+需要安装 [Docker Desktop](https://www.docker.com/products/docker-desktop/)。
 
-# 在 PowerShell 配置文件里加一行别名
-notepad $PROFILE
-# 添加:  function minicc { & "$env:USERPROFILE\AppData\Local\minicc-bin\minicc.ps1" @args }
-```
-
-### 方式二：本地 Python
-
-需要 [Python 3.12+](https://www.python.org/downloads/)。
-
-```powershell
+```bash
+# 克隆并构建
 git clone https://github.com/wxd-hash/mini-CC.git
 cd mini-CC
+docker build -t minicc .
 
-# 创建虚拟环境
-python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt    # 含 anthropic, openai, python-dotenv
-.venv\Scripts\pip install -e .
-
-# 把 minicc 加到 PATH（只需一次，永久生效）
-$venvScripts = "$(Get-Location)\.venv\Scripts"
-[Environment]::SetEnvironmentVariable("Path", "$venvScripts;" + [Environment]::GetEnvironmentVariable("Path", "User"), "User")
-
-# 设置 API key
-[Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "sk-你的key", "User")
-
-# 关闭并重新打开 PowerShell，现在任何目录都可以直接敲 minicc
-minicc
+# 运行
+docker run -it --rm -v "$(pwd):/home/coder/workspace" -e DEEPSEEK_API_KEY minicc
 ```
 
 ## 环境变量
@@ -330,8 +308,6 @@ cp docker-minicc.ps1 $PROFILE\..\docker-minicc.ps1
 # 在 $PROFILE 中添加:
 #   function minicc { & "$env:USERPROFILE\Documents\WindowsPowerShell\docker-minicc.ps1" @args }
 ```
-
-## 安装（本地 Python）
 
 ## 快速测试
 
