@@ -69,10 +69,14 @@ python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt    # 含 anthropic, openai, python-dotenv
 .venv\Scripts\pip install -e .
 
+# 把 minicc 加到 PATH（只需一次，永久生效）
+$venvScripts = "$(Get-Location)\.venv\Scripts"
+[Environment]::SetEnvironmentVariable("Path", "$venvScripts;" + [Environment]::GetEnvironmentVariable("Path", "User"), "User")
+
 # 设置 API key
 [Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "sk-你的key", "User")
 
-# 现在任何目录都可以直接敲 minicc
+# 关闭并重新打开 PowerShell，现在任何目录都可以直接敲 minicc
 minicc
 ```
 
