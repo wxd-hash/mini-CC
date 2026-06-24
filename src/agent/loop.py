@@ -333,8 +333,11 @@ class Engine:
     # Legacy API
     # ------------------------------------------------------------------
 
-    def run(self, user_input: str) -> str | None:
-        """Process one turn. Returns final assistant text."""
+    def run(self, user_input: str, quiet: bool = False) -> str | None:
+        """Process one turn. Returns final assistant text.
+
+        If quiet=True, suppresses all terminal output (used by sub-agents).
+        """
         self._permissions.reset_for_turn()
         last_text = ""
         has_output = False
@@ -342,23 +345,26 @@ class Engine:
             ev_type = event[0]
             if ev_type == "text":
                 last_text = event[1]
-                print(event[1], end="", flush=True)
+                if not quiet:
+                    print(event[1], end="", flush=True)
                 has_output = True
             elif ev_type == "error":
-                print(term.error(event[1]))
+                if not quiet:
+                    print(term.error(event[1]))
             elif ev_type == "tool_executing":
-                _, name, params, activity = event
-                print(term.tool_running(name, self._fmt_params(params), activity or ""))
+                if not quiet:
+                    _, name, params, activity = event
+                    print(term.tool_running(name, self._fmt_params(params), activity or ""))
             elif ev_type == "waiting":
                 pass
 
-        if has_output and last_text:
+        if has_output and last_text and not quiet:
             print()
 
         # ── Post-turn: run memory extraction sub-agent ──
-        # Matches claude-code's extractMemories hook in stopHooks.ts
-        # Runs in background thread, non-blocking
-        self._extract_memories()
+        # Post-turn memory extraction (only for main agent, not sub-agents)
+        if not quiet:
+            self._extract_memories()
 
         return last_text if last_text else None
 

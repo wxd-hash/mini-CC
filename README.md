@@ -277,6 +277,23 @@ mini-claude-code/
 
 已内置 git + ripgrep，非 root 用户运行，所有文件操作在挂载的 workspace 目录内。
 
+### 设为全局命令
+
+安装包装脚本后，在任何目录直接敲 `minicc`：
+
+**macOS / Linux:**
+```bash
+sudo cp docker-minicc.sh /usr/local/bin/minicc
+sudo chmod +x /usr/local/bin/minicc
+```
+
+**Windows PowerShell:**
+```powershell
+cp docker-minicc.ps1 $PROFILE\..\minicc.ps1
+```
+
+之后任何目录敲 `minicc` 即可，和本地安装体验完全一致。
+
 ```bash
 # 构建镜像
 docker build -t minicc .

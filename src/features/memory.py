@@ -73,12 +73,20 @@ name: short-kebab-case-slug
 description: one-line summary for future relevance checks
 metadata:
   type: {types_list}
+last_updated: YYYY-MM-DD
 ---
 
 (memory content — for feedback/project: rule/fact, then **Why:** and **How to apply:**)
 ```
 
 Then add a pointer to MEMORY.md: `- [Title](file.md) — one-line hook`
+
+## Update rules
+
+- If a memory is outdated or wrong, update it in place (bump mtime)
+- If a memory is no longer relevant, remove it from MEMORY.md but keep the file
+- Keep MEMORY.md index under 50 lines — prune least-important entries if needed
+- Timestamps show when each file was last modified — use this to judge freshness
 
 {what_not_to_save}
 
@@ -120,32 +128,103 @@ def ensure_memory_dir(base: str | Path) -> None:
 # Memory index loading (for system prompt injection)
 # ---------------------------------------------------------------------------
 
-def load_memory_index(base: str | Path) -> str:
-    """Load MEMORY.md as the memory index for system prompt injection.
+def _read_text_safe(path: Path) -> str | None:
+    """Read a text file with encoding fallback (UTF-8 → GBK → UTF-8 replace)."""
+    for enc in ("utf-8", "gbk"):
+        try:
+            return path.read_text(encoding=enc)
+        except (OSError, ValueError, UnicodeDecodeError):
+            continue
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
 
-    Lines after 200 are truncated (matches claude-code's behavior).
+
+def memory_age_days(mtime: float) -> int:
+    """Days since file modification. 0=today, 1=yesterday, 2+=older."""
+    return max(0, int((time.time() - mtime) / 86400))
+
+
+def memory_freshness_warning(filepath: Path) -> str:
+    """Staleness warning for memories >1 day old (matches claude-code memoryFreshnessText).
+
+    Returns empty string for fresh memories. For old ones, returns a
+    <system-reminder> note telling the model to verify the memory.
     """
-    idx = _index_path(Path(base))
+    try:
+        mtime = filepath.stat().st_mtime
+    except OSError:
+        return ""
+    days = memory_age_days(mtime)
+    if days <= 1:
+        return ""
+    return (
+        f"This memory is {days} days old. "
+        f"Memories are point-in-time observations, not live state — "
+        f"claims about code behavior may be outdated. "
+        f"Verify against current code before asserting as fact."
+    )
+
+
+def load_memory_index(base: str | Path) -> str:
+    """Load MEMORY.md and referenced memory files into system prompt.
+
+    Lines after 200 are truncated. Memories >1 day old get staleness
+    warnings injected (matching claude-code).
+    """
+    base = Path(base)
+    idx = _index_path(base)
     if not idx.exists():
         return ""
-    content = idx.read_text(encoding="utf-8")
-    lines = content.split("\n")
-    if len(lines) > 200:
-        content = "\n".join(lines[:200]) + "\n... [truncated]"
+    content = _read_text_safe(idx)
+    if not content:
+        return ""
+
+    # Inject staleness warnings for linked memory files
+    import re
+    result_lines = []
+    for line in content.split("\n"):
+        result_lines.append(line)
+        # Check if this line links to a memory file
+        m = re.search(r'\[([^\]]+)\]\(([^)]+\.md)\)', line)
+        if m:
+            mem_file = base / m.group(2)
+            if mem_file.exists():
+                warning = memory_freshness_warning(mem_file)
+                if warning:
+                    result_lines.append(f"  [STALE: {warning}]")
+
+    content = "\n".join(result_lines)
+    if len(result_lines) > 200:
+        content = "\n".join(result_lines[:200]) + "\n... [truncated]"
     return content
 
 
 def scan_memory_files(base: str | Path) -> str:
-    """Build a manifest of existing memory files for the extraction agent."""
+    """Build a manifest of existing memory files for the extraction agent.
+
+    Includes mtime so the agent can judge freshness (matching claude-code).
+    """
     base = Path(base)
     if not base.is_dir():
         return ""
+    # Sort by mtime, newest first (matches claude-code)
+    files = sorted(
+        [f for f in base.glob("*.md") if f.name != "MEMORY.md"],
+        key=lambda f: f.stat().st_mtime if f.exists() else 0,
+        reverse=True,
+    )[:200]  # Cap at 200 (matches claude-code MAX_MEMORY_FILES)
     parts = []
-    for f in sorted(base.glob("*.md")):
-        if f.name == "MEMORY.md":
-            continue
-        content = f.read_text(encoding="utf-8")[:200]
-        parts.append(f"### {f.name}\n{content}")
+    for f in files:
+        try:
+            age = memory_age_days(f.stat().st_mtime)
+            age_str = "today" if age == 0 else f"{age}d ago"
+        except OSError:
+            age_str = "unknown"
+        content = _read_text_safe(f)
+        if content:
+            parts.append(f"### {f.name} (modified: {age_str})\n{content[:200]}")
     return "\n\n".join(parts)
 
 
@@ -193,6 +272,7 @@ def _start_extraction_thread(
 
     def _run():
         try:
+            _cleanup_orphaned_files(memory_dir)
             _do_extraction(main_engine, memory_dir, messages, provider_factory, model)
         except Exception:
             pass
@@ -222,6 +302,33 @@ def _main_agent_already_wrote(messages: list[dict[str, Any]], memory_dir: Path) 
         if isinstance(content, str) and memory_dir_str in content:
             return True
     return False
+
+
+def _cleanup_orphaned_files(memory_dir: Path) -> int:
+    """Remove .md files not referenced in MEMORY.md index. Returns count removed."""
+    idx = _index_path(memory_dir)
+    if not idx.exists():
+        return 0
+    content = _read_text_safe(idx)
+    if not content:
+        return 0
+    # Extract all linked filenames from MEMORY.md
+    import re
+    linked = set()
+    for m in re.finditer(r'\[.*?\]\(([^)]+)\)', content):
+        linked.add(m.group(1))
+    # Delete .md files not in the index
+    removed = 0
+    for f in memory_dir.glob("*.md"):
+        if f.name == "MEMORY.md":
+            continue
+        if f.name not in linked:
+            try:
+                f.unlink()
+                removed += 1
+            except OSError:
+                pass
+    return removed
 
 
 def _should_extract(messages: list[dict[str, Any]], memory_dir: Path) -> bool:
@@ -305,8 +412,14 @@ def _do_extraction(
         workspace_dir=memory_dir,
     )
 
-    # Run the extraction
-    sub_engine.run(full_prompt)
+    # Run the extraction silently (suppress terminal output)
+    import sys, io
+    old_stdout = sys.stdout
+    sys.stdout = io.StringIO()
+    try:
+        sub_engine.run(full_prompt, quiet=True)
+    finally:
+        sys.stdout = old_stdout
 
     # Record extraction timestamp
     _record_extraction(memory_dir)
