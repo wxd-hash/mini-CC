@@ -89,8 +89,9 @@ def run_repl(
 
     first = True
     last_ctrlc = 0.0
+    running = True
 
-    while True:
+    while running:
         try:
             if not first:
                 print(term.hr(), flush=True)
@@ -102,8 +103,9 @@ def run_repl(
             except (EOFError, KeyboardInterrupt):
                 now = time.monotonic()
                 if now - last_ctrlc <= DOUBLE_PRESS_SECONDS:
+                    running = False
                     print("\nGoodbye.")
-                    break
+                    continue
                 last_ctrlc = now
                 print(f"\n{term._YELLOW}Press Ctrl+C again to exit{term._RESET}")
                 first = True
@@ -114,18 +116,19 @@ def run_repl(
             if not stripped:
                 continue
 
-            # Slash commands
+            # Slash commands — handle /exit BEFORE handle_command
             if stripped.startswith("/"):
                 parts = stripped[1:].split(maxsplit=1)
                 cmd_name = parts[0].lower()
                 cmd_args = parts[1] if len(parts) > 1 else ""
 
                 if cmd_name in ("exit", "quit"):
-                    break
+                    running = False
+                    continue
 
                 if cmd_name == "resume":
-                    resume_arg = True if not cmd_args else cmd_args
-                    do_resume(engine, log_dir, workspace, resume_arg)
+                    do_resume(engine, log_dir, workspace,
+                              True if not cmd_args else cmd_args)
                     continue
 
                 if handle_command(
@@ -145,7 +148,8 @@ def run_repl(
             print(term.info("Turn cancelled."))
             continue
         except EOFError:
-            break
+            running = False
+            continue
         except Exception:
             print()
             print(term.error("Engine crashed — but I'm still alive. Try again."))
