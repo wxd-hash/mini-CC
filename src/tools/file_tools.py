@@ -1,4 +1,9 @@
-"""File-related tools and path-safety utilities."""
+"""File-related tools and path-safety utilities.
+
+Each tool now follows the cc-mini protocol: execute() returns ToolResult,
+is_read_only() declares concurrency safety, get_activity_description()
+provides a human-readable one-liner for the terminal spinner.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from src.config import WORKSPACE_DIR
-from src.tools.base import Tool
+from src.tools.base import Tool, ToolResult
 
 _IGNORE_DIRS = frozenset({".git", "__pycache__", "node_modules", ".venv"})
 
@@ -59,6 +64,98 @@ def safe_path(path_str: str, workspace_dir: Path | None = None) -> Path:
 # File-operation tools
 # ======================================================================
 
+class FileEditTool(Tool):
+    """Edit a file by exact string replacement (matches claude-code's FileEditTool)."""
+
+    def __init__(self, workspace_dir: Path) -> None:
+        self._ws = workspace_dir.resolve()
+
+    @property
+    def name(self) -> str:
+        return "edit_file"
+
+    @property
+    def description(self) -> str:
+        return (
+            "精确替换文件中的字符串。old_string 必须在文件中唯一。"
+            "用 replace_all=True 可替换所有出现。"
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path relative to workspace",
+                },
+                "old_string": {
+                    "type": "string",
+                    "description": "Exact text to replace (must be unique in file)",
+                },
+                "new_string": {
+                    "type": "string",
+                    "description": "Replacement text",
+                },
+                "replace_all": {
+                    "type": "boolean",
+                    "description": "Replace all occurrences (default: false)",
+                },
+            },
+            "required": ["path", "old_string", "new_string"],
+        }
+
+    def get_activity_description(self, **kwargs: Any) -> str | None:
+        p = kwargs.get("path", "")
+        return f"Editing {p}" if p else "Editing file"
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        path_str = kwargs.get("path", "")
+        old = kwargs.get("old_string", "")
+        new = kwargs.get("new_string", "")
+        replace_all = kwargs.get("replace_all", False)
+
+        try:
+            path = safe_path(path_str, self._ws)
+        except ValueError as e:
+            return ToolResult(content=str(e), is_error=True)
+
+        if not path.is_file():
+            return ToolResult(content=f"Error: file not found: {path_str!r}", is_error=True)
+
+        try:
+            content = path.read_text(encoding="utf-8")
+        except Exception as e:
+            return ToolResult(content=f"Error reading file: {e}", is_error=True)
+
+        if not replace_all and old not in content:
+            return ToolResult(
+                content=f"Error: old_string not found in file. The text must match exactly including whitespace.",
+                is_error=True,
+            )
+        if not replace_all and content.count(old) > 1:
+            return ToolResult(
+                content=f"Error: old_string found {content.count(old)} times in file. "
+                        f"It must be unique. Use a larger string with more surrounding context, "
+                        f"or use replace_all=True to replace all occurrences.",
+                is_error=True,
+            )
+
+        new_content = content.replace(old, new) if replace_all else content.replace(old, new, 1)
+        try:
+            path.write_text(new_content, encoding="utf-8")
+        except Exception as e:
+            return ToolResult(content=f"Error writing file: {e}", is_error=True)
+
+        found = content.count(old) if replace_all else 1
+        return ToolResult(content=f"Replaced {found} occurrence(s) of old_string in {path}")
+
+
+# ======================================================================
+# File-operation tools
+# ======================================================================
+
 class ReadFile(Tool):
     """Read the contents of a workspace file."""
 
@@ -73,7 +170,7 @@ class ReadFile(Tool):
 
     @property
     def description(self) -> str:
-        return "Read contents of a file within the workspace (max 12000 chars)"
+        return "读取工作区内指定文件的内容（最多 12000 字）"
 
     @property
     def input_schema(self) -> dict[str, Any]:
@@ -88,17 +185,32 @@ class ReadFile(Tool):
             "required": ["path"],
         }
 
-    def run(self, args: dict[str, Any]) -> str:
-        path = safe_path(args["path"], self._ws)
+    def is_read_only(self) -> bool:
+        return True
+
+    def get_activity_description(self, **kwargs: Any) -> str | None:
+        p = kwargs.get("path", "")
+        return f"Reading {p}" if p else "Reading file"
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        path_str = kwargs.get("path", "")
+        try:
+            path = safe_path(path_str, self._ws)
+        except ValueError as e:
+            return ToolResult(content=str(e), is_error=True)
         if not path.is_file():
-            return f"Error: file not found: {args['path']!r}"
-        content = path.read_text(encoding="utf-8")
+            return ToolResult(content=f"Error: file not found: {path_str!r}", is_error=True)
+        try:
+            content = path.read_text(encoding="utf-8")
+        except Exception as e:
+            return ToolResult(content=f"Error reading file: {e}", is_error=True)
         if len(content) <= self.MAX_CHARS:
-            return content
-        return content[: self.MAX_CHARS] + (
-            f"\n\n... [truncated at {self.MAX_CHARS} chars, "
-            f"total {len(content)} chars]"
-        )
+            return ToolResult(content=content)
+        return ToolResult(content=(
+            content[: self.MAX_CHARS]
+            + f"\n\n... [truncated at {self.MAX_CHARS} chars, "
+            + f"total {len(content)} chars]"
+        ))
 
 
 class WriteFile(Tool):
@@ -113,7 +225,7 @@ class WriteFile(Tool):
 
     @property
     def description(self) -> str:
-        return "Write content to a file within the workspace"
+        return "将内容写入工作区内的指定文件"
 
     @property
     def input_schema(self) -> dict[str, Any]:
@@ -132,12 +244,23 @@ class WriteFile(Tool):
             "required": ["path", "content"],
         }
 
-    def run(self, args: dict[str, Any]) -> str:
-        path = safe_path(args["path"], self._ws)
-        content = args["content"]
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
-        return f"Wrote {len(content)} chars to {path}"
+    def get_activity_description(self, **kwargs: Any) -> str | None:
+        p = kwargs.get("path", "")
+        return f"Writing {p}" if p else "Writing file"
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        path_str = kwargs.get("path", "")
+        content = kwargs.get("content", "")
+        try:
+            path = safe_path(path_str, self._ws)
+        except ValueError as e:
+            return ToolResult(content=str(e), is_error=True)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        except Exception as e:
+            return ToolResult(content=f"Error writing file: {e}", is_error=True)
+        return ToolResult(content=f"Wrote {len(content)} chars to {path}")
 
 
 class ListFiles(Tool):
@@ -154,7 +277,7 @@ class ListFiles(Tool):
 
     @property
     def description(self) -> str:
-        return "List files and directories within the workspace"
+        return "列出工作区内指定目录的文件和子目录"
 
     @property
     def input_schema(self) -> dict[str, Any]:
@@ -169,10 +292,21 @@ class ListFiles(Tool):
             "required": [],
         }
 
-    def run(self, args: dict[str, Any]) -> str:
-        dir_path = safe_path(args.get("path", "."), self._ws)
+    def is_read_only(self) -> bool:
+        return True
+
+    def get_activity_description(self, **kwargs: Any) -> str | None:
+        p = kwargs.get("path", ".")
+        return f"Listing {p}"
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        dir_path_str = kwargs.get("path", ".")
+        try:
+            dir_path = safe_path(dir_path_str, self._ws)
+        except ValueError as e:
+            return ToolResult(content=str(e), is_error=True)
         if not dir_path.is_dir():
-            return f"Error: not a directory: {args.get('path', '.')!r}"
+            return ToolResult(content=f"Error: not a directory: {dir_path_str!r}", is_error=True)
 
         entries: list[str] = []
         for p in sorted(dir_path.iterdir()):
@@ -189,13 +323,12 @@ class ListFiles(Tool):
             entries = entries[: self.MAX_ENTRIES]
             entries.append(f"  ... (truncated at {self.MAX_ENTRIES}, {total} total)")
 
-        label = args.get("path", ".")
-        return (
-            f"Contents of {label} ({min(total, self.MAX_ENTRIES)} entries):\n"
-            + "\n".join(entries)
-            if entries
-            else f"Contents of {label}: (empty)"
-        )
+        if entries:
+            return ToolResult(content=(
+                f"Contents of {dir_path_str} ({min(total, self.MAX_ENTRIES)} entries):\n"
+                + "\n".join(entries)
+            ))
+        return ToolResult(content=f"Contents of {dir_path_str}: (empty)")
 
 
 class SearchFiles(Tool):
@@ -213,7 +346,7 @@ class SearchFiles(Tool):
 
     @property
     def description(self) -> str:
-        return "Search for a keyword across text files within the workspace"
+        return "在工作区内的文本文件中搜索关键词"
 
     @property
     def input_schema(self) -> dict[str, Any]:
@@ -232,26 +365,37 @@ class SearchFiles(Tool):
             "required": ["query"],
         }
 
-    def run(self, args: dict[str, Any]) -> str:
-        query: str = args["query"]
-        root = safe_path(args.get("path", "."), self._ws)
+    def is_read_only(self) -> bool:
+        return True
+
+    def get_activity_description(self, **kwargs: Any) -> str | None:
+        q = kwargs.get("query", "")
+        return f"Searching for '{q}'" if q else "Searching"
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        query: str = kwargs.get("query", "")
+        root_str = kwargs.get("path", ".")
+        try:
+            root = safe_path(root_str, self._ws)
+        except ValueError as e:
+            return ToolResult(content=str(e), is_error=True)
         if not root.is_dir():
-            return f"Error: not a directory: {args.get('path', '.')!r}"
+            return ToolResult(content=f"Error: not a directory: {root_str!r}", is_error=True)
 
         # Try ripgrep first for speed on large projects
-        result = self._rg_search(query, root)
-        if result is not None:
-            return result
+        rg_result = self._rg_search(query, root)
+        if rg_result is not None:
+            return ToolResult(content=rg_result)
 
         # Fall back to pure Python
-        return self._slow_search(query, root, args.get("path", "."))
+        return ToolResult(content=self._slow_search(query, root, root_str))
 
     # ------------------------------------------------------------------
     # ripgrep accelerated search
     # ------------------------------------------------------------------
 
     def _rg_search(self, query: str, root: Path) -> str | None:
-        """Try ripgrep. Returns ``None`` if rg is unavailable or times out."""
+        """Try ripgrep. Returns None if rg is unavailable or times out."""
         import subprocess
         try:
             ignores: list[str] = []
@@ -273,14 +417,13 @@ class SearchFiles(Tool):
         if proc.returncode == 1 and not output:
             return f"No matches for {query!r}"
         if not output:
-            return None  # unexpected — fall back
+            return None
 
         lines = output.split("\n")
         truncated = len(lines) > self.MAX_RESULTS
         if truncated:
             lines = lines[: self.MAX_RESULTS]
 
-        # Truncate long lines
         result_lines: list[str] = []
         for line in lines:
             if len(line) > self.MAX_LINE_CHARS + 50:
@@ -334,7 +477,7 @@ class SearchFiles(Tool):
 # Self-test (call from main.py at startup)
 # ---------------------------------------------------------------------------
 
-def self_test() -> None:  # noqa: D401
+def self_test() -> None:
     """Run a quick smoke-test of ``safe_path`` in a temp workspace."""
     import tempfile
 

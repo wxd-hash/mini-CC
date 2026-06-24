@@ -1,4 +1,19 @@
-"""Slash command handlers and resume logic."""
+"""Slash command handlers — legacy commands + new cc-mini-style skills.
+
+Commands:
+  /perm <plan|ask|auto|status>  — permission mode
+  /tools                        — list tools
+  /tool <name> <json_args>      — manual tool invocation
+  /clear                        — clear conversation
+  /reload                       — rebuild system prompt
+  /compact                      — compact conversation
+  /resume [session]             — resume a previous session
+  /history                      — list saved sessions
+  /skills                       — list available skills
+  /plan                         — enter plan mode
+  /review, /commit, /test, /simplify — bundled skills
+  /exit, /quit                  — exit
+"""
 
 from __future__ import annotations
 
@@ -7,18 +22,39 @@ from pathlib import Path
 from typing import Any
 
 from src import terminal as term
-from src.agent.loop import MiniClaudeAgent
-from src.security.permission import PermissionManager, Mode
-from src.session.logger import list_sessions, load_session_messages
+from src.security.permission import PermissionChecker, Mode
 from src.tools.registry import ToolRegistry
+
+
+# ---------------------------------------------------------------------------
+# Command context (matches cc-mini's CommandContext)
+# ---------------------------------------------------------------------------
+
+class CommandContext:
+    """Holds all dependencies needed by slash command handlers."""
+
+    def __init__(
+        self,
+        session_store: Any = None,
+        permissions: PermissionChecker | None = None,
+    ) -> None:
+        self.session_store = session_store
+        self.permissions = permissions
 
 
 # ---------------------------------------------------------------------------
 # Resume
 # ---------------------------------------------------------------------------
 
-def do_resume(agent: MiniClaudeAgent, log_dir: Path, workspace: str, resume_arg: Any) -> None:
+def do_resume(
+    engine: Any,
+    log_dir: Path,
+    workspace: str,
+    resume_arg: Any,
+) -> None:
     """Run the resume flow: find session, show picker, load + print history."""
+    from src.session.logger import list_sessions, load_session_messages, _workspace_dir_name
+
     session_path: Path | None = None
 
     if resume_arg is True:
@@ -56,7 +92,7 @@ def do_resume(agent: MiniClaudeAgent, log_dir: Path, workspace: str, resume_arg:
         return
 
     _print_history(messages)
-    agent.resume(messages)
+    engine.resume(messages)
     print(term.success(f"Resumed from {session_path.name} ({len(messages)} messages)"))
     print()
 
@@ -68,10 +104,14 @@ def _print_history(messages: list[dict[str, Any]]) -> None:
         content = msg.get("content", "")
         if role == "user":
             print(f"\n{term.prompt()}{content}")
-        elif content.startswith("[tool]") or content.startswith("[called"):
+        elif isinstance(content, str) and (
+            content.startswith("[tool]") or content.startswith("[called")
+        ):
             for line in content.split("\n"):
-                print(term.tool_result(line))
-        elif content.startswith("[permission_denied]") or content.startswith("[error]"):
+                print(f"  {line}")
+        elif isinstance(content, str) and (
+            content.startswith("[permission_denied]") or content.startswith("[error]")
+        ):
             print(term.error(content))
         else:
             print(f"\n{term.assistant_text(content)}")
@@ -82,7 +122,7 @@ def _print_history(messages: list[dict[str, Any]]) -> None:
 # Slash command dispatchers
 # ---------------------------------------------------------------------------
 
-def handle_perm(permission: PermissionManager, rest: str) -> None:
+def handle_perm(permission: PermissionChecker, rest: str) -> None:
     arg = rest.strip()
     if arg == "status":
         print(term.info(f"Permission mode: {permission.mode.value}"))
@@ -100,7 +140,7 @@ def handle_tools(registry: ToolRegistry) -> None:
     print(term.hr())
 
 
-def handle_tool(registry: ToolRegistry, permission: PermissionManager, rest: str) -> None:
+def handle_tool(registry: ToolRegistry, permission: PermissionChecker, rest: str) -> None:
     parts = rest.strip().split(maxsplit=1)
     if len(parts) != 2:
         print(term.info('Usage: /tool <name> <json_args>'))
@@ -124,11 +164,134 @@ def handle_tool(registry: ToolRegistry, permission: PermissionManager, rest: str
         print(term.error(f"Unknown tool: {name!r}"))
         return
 
-    if not permission.check(name, args):
+    perm = permission.check(tool, args)
+    if perm == "deny":
         return
 
     try:
-        result = tool.run(args)
-        print(term.tool_result(result))
+        result = tool.execute(**args)
+        content = result.content if hasattr(result, 'content') else str(result)
+        is_err = result.is_error if hasattr(result, 'is_error') else False
+        if is_err:
+            print(term.tool_error(content))
+        else:
+            print(term.tool_done(content))
     except Exception as exc:
         print(term.error(f"Tool error: {exc}"))
+
+
+# ---------------------------------------------------------------------------
+# New cc-mini-style commands
+# ---------------------------------------------------------------------------
+
+def handle_skills() -> None:
+    """List all available skills."""
+    from src.features.skills import list_skills
+    skills = list_skills()
+    if not skills:
+        print(term.info("No skills registered."))
+        return
+    print(term.hr())
+    for s in skills:
+        print(term.banner_line(f"/{s.name}", s.description))
+    print(term.hr())
+
+
+def handle_skill_command(skill_name: str, args: str, engine: Any) -> None:
+    """Run a skill by name, submitting its prompt to the engine."""
+    from src.features.skills import get_skill
+    skill = get_skill(skill_name)
+    if skill is None:
+        print(term.error(f"Unknown skill: /{skill_name}"))
+        print(term.info("Type /skills to see available skills."))
+        return
+
+    prompt = skill.run(args)
+    if prompt is None:
+        print(term.info(f"Skill /{skill_name} produced no prompt."))
+        return
+
+    print(term.info(f"Running skill: /{skill_name}"))
+    engine.run(prompt)
+
+
+def handle_history(log_dir: Path, workspace: str) -> None:
+    """List saved sessions."""
+    from src.session.logger import list_sessions
+    sessions = list_sessions(log_dir, workspace)
+    if not sessions:
+        print(term.info("No saved sessions for this workspace."))
+        return
+    print(term.hr())
+    for i, (path, name, ts) in enumerate(sessions, 1):
+        print(term.banner_line(f"  [{i}]", f"{name[:50]}  {ts}"))
+    print(term.hr())
+    print(term.info("Use /resume <number> to resume a session."))
+
+
+# ---------------------------------------------------------------------------
+# Command dispatcher
+# ---------------------------------------------------------------------------
+
+def handle_command(
+    cmd_name: str,
+    cmd_args: str,
+    engine: Any,
+    registry: ToolRegistry,
+    permission: PermissionChecker,
+    log_dir: Path,
+    workspace: str,
+    session_store: Any = None,
+) -> bool:
+    """Dispatch a slash command. Returns True if handled, False if not a command."""
+    cmd = cmd_name.lower()
+
+    if cmd in ("exit", "quit"):
+        return True  # caller handles exit
+
+    if cmd == "perm":
+        handle_perm(permission, cmd_args)
+        return True
+
+    if cmd == "tools":
+        handle_tools(registry)
+        return True
+
+    if cmd == "tool":
+        handle_tool(registry, permission, cmd_args)
+        return True
+
+    if cmd == "clear":
+        if engine:
+            engine.clear()
+        return True
+
+    if cmd == "reload":
+        if engine:
+            engine.reload()
+        return True
+
+    if cmd == "compact":
+        if engine:
+            engine._maybe_compact()
+        return True
+
+    if cmd == "skills":
+        handle_skills()
+        return True
+
+    if cmd == "history":
+        handle_history(log_dir, workspace)
+        return True
+
+    if cmd in ("review", "commit", "test", "simplify"):
+        handle_skill_command(cmd, cmd_args, engine)
+        return True
+
+    if cmd == "plan":
+        print(term.info("Plan mode: describe what you want to plan, e.g. /plan add authentication"))
+        if cmd_args.strip():
+            engine.run(f"Plan: {cmd_args.strip()}")
+        return True
+
+    return False

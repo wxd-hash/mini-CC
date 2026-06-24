@@ -1,4 +1,7 @@
-"""Project context — reads CLAUDE.md, builds system prompts, and compacts history."""
+"""Project context — builds system prompts, loads CLAUDE.md, compacts history.
+
+Matches cc-mini's context builder with added skills/memory sections.
+"""
 
 from __future__ import annotations
 
@@ -6,44 +9,50 @@ from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# Base prompt (always included)
+# Base prompt (kept from original project, enhanced with cc-mini structure)
 # ---------------------------------------------------------------------------
 
 BASE_SYSTEM_PROMPT = """\
-你是 Mini Claude Code，一个终端 coding agent。
+你是 Mini Claude Code，一个终端编程助手。请始终用中文回复用户。
 
-## 重要：工作目录
-你的 workspace 根目录是 {workspace}。
-- read_file / write_file / list_files / search_files 的 path 参数都是相对于此目录
-- run_shell 的命令会在此目录下执行，不需要 cd
+## 工作目录
+你的工作目录是 {workspace}。
+- read_file / write_file / list_files / search_files 的 path 参数相对于此目录
+- run_shell 命令在此目录下执行，不需要 cd
 - 所有文件操作都在此目录内
 
 ## 项目记忆
-项目的 <project_memory> 区块包含跨 session 持久化的记忆：用户偏好、架构决策、常见陷阱。
-当你发现重要的用户偏好、架构决策或项目陷阱时，用 write_file 更新记忆文件：
+<project_memory> 包含跨会话的持久记忆：用户偏好、架构决策、常见陷阱。
+当你发现重要偏好/决策/陷阱时，用 write_file 更新记忆文件：
   path = "{memory_path}"
-写入时保留已有内容，添加新条目。如果文件不存在就创建。
+保留已有内容，追加新条目。文件不存在就创建。
 
-## 规则
+## Shell 命令规则（防无限循环）
+- 服务器/长运行命令：用 run_in_background=true，启动后立即返回。
+  进程在后台运行，不需要等结果。不要杀进程，不要重启。
+- 命令超过 15 秒会自动转入后台，这不是错误，进程还在跑。
+- 绝对禁止 sleep 循环或轮询。命令失败就诊断根因，不要重试
+- 如果必须 sleep，控制在 2 秒以内
+- 优先用专用工具：read_file 不用 cat，write_file 不用 echo >，
+  list_files 不用 ls，search_files 不用 grep/rg
+
+## 行为规则
 - 修改文件前先 read_file
-- 修改后尽量 run_shell 测试
-- 如果同一个操作连续失败 2 次，停下来分析原因，不要继续重试
+- 修改后尽量 run_shell 跑测试
+- 同一操作连续失败 2 次就停下来分析根因
 - 不要连续 3 次读同一个文件不修改
-- 对危险操作要谨慎
-- 修改完成后调用 git_diff 总结所有变更
-- 最后总结改了什么、运行了什么验证命令"""
+- 危险操作要谨慎
+- 改完用 git_diff 总结所有变更
+- 最后用中文总结改了什么、验证了什么"""
 
-# ---------------------------------------------------------------------------
 # Limits
-# ---------------------------------------------------------------------------
-
 MAX_INSTRUCTIONS_CHARS = 8000
 MEMORY_MAX_CHARS = 6000
 
 
 def _read_text_safe(path: Path) -> str | None:
     """Read a file trying UTF-8 first, then GBK, then UTF-8 replace.
-    Returns ``None`` if the file cannot be read at all.
+    Returns None if the file cannot be read at all.
     """
     for enc in ("utf-8", "gbk"):
         try:
@@ -57,18 +66,11 @@ def _read_text_safe(path: Path) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# CLAUDE.md loading (kept from original project)
 # ---------------------------------------------------------------------------
 
 def load_project_instructions(workspace_dir: Path) -> str:
-    """Walk from *workspace_dir* up to the filesystem root, collecting
-    ``CLAUDE.md``, ``.claude/CLAUDE.md``, and ``CLAUDE.local.md`` at each
-    level.
-
-    Files closer to the workspace appear later and can override earlier
-    (higher-level) instructions.  Each file is capped at
-    ``MAX_INSTRUCTIONS_CHARS`` characters individually.
-    """
+    """Walk from workspace_dir up to root, collecting CLAUDE.md files."""
     parts: list[str] = []
     seen: set[str] = set()
     ws = workspace_dir.resolve()
@@ -90,7 +92,7 @@ def load_project_instructions(workspace_dir: Path) -> str:
             label = _relative_label(path, ws)
             parts.append(f"<!-- {label} -->\n{content}")
 
-    # Reversed: root-level instructions first, workspace-last (highest priority)
+    # Reversed: root-level first, workspace last (highest priority)
     return "\n\n".join(reversed(parts))
 
 
@@ -102,13 +104,15 @@ def _relative_label(path: Path, workspace: Path) -> str:
         return str(path)
 
 
-def load_memory(workspace_dir: Path, sessions_dir: Path | None = None) -> str:
-    """Load the project memory file (cross-session persistent preferences)."""
-    if sessions_dir is None:
+# ---------------------------------------------------------------------------
+# Memory loading
+# ---------------------------------------------------------------------------
+
+def load_memory(memory_dir: Path | None = None) -> str:
+    """Load MEMORY.md from the KAIROS memory directory."""
+    if memory_dir is None:
         return ""
-    from src.session.logger import _workspace_dir_name
-    ws_name = _workspace_dir_name(str(workspace_dir.resolve()))
-    memory_path = sessions_dir / ws_name / "memory.md"
+    memory_path = memory_dir / "MEMORY.md"
     if not memory_path.is_file():
         return ""
     content = _read_text_safe(memory_path)
@@ -119,25 +123,49 @@ def load_memory(workspace_dir: Path, sessions_dir: Path | None = None) -> str:
     return content
 
 
+# ---------------------------------------------------------------------------
+# System prompt builder (matches cc-mini pattern)
+# ---------------------------------------------------------------------------
+
 def build_system_prompt(
-    workspace_dir: Path,
+    cwd: str = "",
+    model: str = "",
+    memory_dir: Path | None = None,
+    workspace_dir: Path | None = None,
     sessions_dir: Path | None = None,
 ) -> str:
-    """Build the full system prompt: base + instructions + memory."""
-    from src.session.logger import _workspace_dir_name
-    ws_name = _workspace_dir_name(str(workspace_dir.resolve()))
-    memory_path = f"{sessions_dir / ws_name / 'memory.md'}" if sessions_dir else "(sessions dir not configured)"
+    """Build the full system prompt: base + instructions + memory + skills.
+
+    Matches cc-mini's build_system_prompt() pattern.
+    """
+    # Backward compat: workspace_dir takes precedence, fall back to cwd
+    if workspace_dir is None:
+        workspace_dir = Path(cwd) if cwd else Path.cwd()
+    ws = workspace_dir.resolve() if isinstance(workspace_dir, str) else workspace_dir.resolve()
+
+    # Memory path
+    if memory_dir:
+        memory_path = str(memory_dir / "MEMORY.md")
+    elif sessions_dir:
+        from src.session.logger import _workspace_dir_name
+        ws_name = _workspace_dir_name(str(ws))
+        memory_path = str(sessions_dir / ws_name / "memory.md")
+    else:
+        memory_path = "(sessions dir not configured)"
+
     base = BASE_SYSTEM_PROMPT.format(
-        workspace=str(workspace_dir.resolve()),
+        workspace=str(ws),
         memory_path=memory_path,
     )
     parts = [base]
 
-    instructions = load_project_instructions(workspace_dir)
+    # Project instructions (CLAUDE.md hierarchy)
+    instructions = load_project_instructions(ws)
     if instructions:
         parts.append(f"<project_instructions>\n{instructions}\n</project_instructions>")
 
-    memory = load_memory(workspace_dir, sessions_dir)
+    # KAIROS memory
+    memory = load_memory(memory_dir)
     if memory:
         parts.append(f"<project_memory>\n{memory}\n</project_memory>")
 
@@ -152,25 +180,25 @@ COMPACT_SYSTEM_PROMPT = """\
 You are a conversation summarizer. Summarize the conversation segment below.
 Include these sections:
 
-## 用户目标
+## User Goal
 (What the user asked for)
 
-## 已读文件
+## Files Read
 (Files that were read)
 
-## 已修改文件
+## Files Modified
 (Files that were modified/created)
 
-## 已运行命令
+## Commands Run
 (Shell commands that were executed and their results)
 
-## 当前问题
+## Current Issues
 (Any unresolved issues)
 
-## 下一步建议
+## Next Steps
 (Recommended next steps)
 
-Be concise. Use Chinese if the conversation is in Chinese."""
+Be concise."""
 
 
 def micro_compact(
@@ -179,9 +207,8 @@ def micro_compact(
 ) -> list[dict[str, Any]]:
     """Truncate old tool results in-place — zero cost, no API call.
 
-    Only messages beyond *keep_recent* are affected.  Tool-result content
-    is replaced with ``[content truncated]``, keeping the structure intact
-    so both Anthropic and OpenAI providers stay happy.
+    Only messages beyond *keep_recent* are affected. Tool-result content
+    is replaced with ``[content truncated]``, keeping the structure intact.
     """
     if len(messages) <= keep_recent:
         return messages
@@ -219,8 +246,7 @@ def compact_messages(
 
     cutoff = len(messages) - keep_recent
 
-    # Don't split a tool-call sequence: walk back to include the parent
-    # assistant message that owns any leading tool responses.
+    # Don't split a tool-call sequence
     adjusted = cutoff
     while adjusted > 0 and messages[adjusted].get("role") == "tool":
         adjusted -= 1
@@ -235,12 +261,11 @@ def compact_messages(
 
     recent = messages[adjusted:]
 
-    # Belt-and-suspenders: strip any remaining orphaned tool messages
-    # at the front of recent (edge case when adjusted lands on 0).
+    # Strip orphaned tool messages at front
     while recent and recent[0].get("role") == "tool":
         recent = recent[1:]
     if not recent:
-        return messages  # nothing left — abort compaction
+        return messages
 
     old = messages[: messages.index(recent[0])]
     old_text = _messages_to_text(old)
@@ -263,7 +288,6 @@ def _messages_to_text(messages: list[dict[str, Any]]) -> str:
         content = msg.get("content")
 
         if content is None:
-            # OpenAI tool_calls message
             for tc in msg.get("tool_calls", []):
                 fn = tc.get("function", {})
                 lines.append(f"[tool:{fn.get('name', '?')}] {fn.get('arguments', '')}")

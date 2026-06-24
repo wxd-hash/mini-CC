@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from src.tools.base import Tool
+from src.tools.base import Tool, ToolResult
 
 
 class GitDiff(Tool):
@@ -27,7 +27,7 @@ class GitDiff(Tool):
 
     @property
     def description(self) -> str:
-        return "Show git diff of unstaged or staged changes (read-only)"
+        return "显示 git 工作区或暂存区的差异（只读）"
 
     @property
     def input_schema(self) -> dict[str, Any]:
@@ -46,13 +46,24 @@ class GitDiff(Tool):
             "required": [],
         }
 
+    # -- cc-mini protocol --------------------------------------------------
+
+    def is_read_only(self) -> bool:
+        return True
+
+    def get_activity_description(self, **kwargs: Any) -> str | None:
+        staged = kwargs.get("staged", False)
+        path = kwargs.get("path", ".")
+        label = "staged" if staged else "working tree"
+        return f"Git diff ({label})"
+
     # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------
 
-    def run(self, args: dict[str, Any]) -> str:
-        target = args.get("path", ".")
-        staged = args.get("staged", False)
+    def execute(self, **kwargs: Any) -> ToolResult:
+        target = kwargs.get("path", ".")
+        staged = kwargs.get("staged", False)
 
         try:
             subprocess.run(
@@ -61,7 +72,7 @@ class GitDiff(Tool):
                 cwd=str(self._ws), check=True, timeout=10,
             )
         except (subprocess.CalledProcessError, FileNotFoundError):
-            return "Not a git repository. Initialize one with: git init"
+            return ToolResult(content="Not a git repository. Initialize one with: git init")
 
         cmd = ["git", "diff"]
         if staged:
@@ -74,14 +85,14 @@ class GitDiff(Tool):
                 cwd=str(self._ws), timeout=30,
             )
         except subprocess.TimeoutExpired:
-            return "Error: git diff timed out"
+            return ToolResult(content="Error: git diff timed out", is_error=True)
         except FileNotFoundError:
-            return "Error: git is not installed or not on PATH"
+            return ToolResult(content="Error: git is not installed or not on PATH", is_error=True)
 
         output = result.stdout.rstrip()
         label = "staged" if staged else "working tree"
         if not output:
-            return f"No changes ({label} clean)"
+            return ToolResult(content=f"No changes ({label} clean)")
 
         if result.stderr:
             output += f"\n\n[stderr]\n{result.stderr.rstrip()}"
@@ -92,4 +103,4 @@ class GitDiff(Tool):
                 + f"\n\n... [truncated at {self.MAX_OUTPUT} chars]"
             )
 
-        return output
+        return ToolResult(content=output)

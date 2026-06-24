@@ -1,22 +1,23 @@
-"""Terminal output styling — ANSI escape codes via colorama.
+"""Terminal output styling — matches Claude Code's visual design.
 
-Inspired by Claude Code's terminal UI.  Every function returns a string
-that can be printed directly.
+Key patterns from claude-code:
+  ↳ ToolName(args)                   ← tool call, dim
+  ↳ ToolName(args) ... ⏳ running    ← tool executing
+  ↳ ToolName(args) ... ✓ done        ← tool success
+  ↳ ToolName(args) ... ✗ error       ← tool failure
+  [auth] message                      ← permission prompt (yellow)
+  BLOCKED: message                    ← self-destruct blocked (red)
 """
 
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 import colorama
 
 colorama.init(autoreset=True)
 
-# ---------------------------------------------------------------------------
-# Raw ANSI codes
-# ---------------------------------------------------------------------------
-
+# Raw ANSI
 _RESET = colorama.Style.RESET_ALL
 _DIM = colorama.Style.DIM
 _BRIGHT = colorama.Style.BRIGHT
@@ -26,56 +27,94 @@ _CYAN = colorama.Fore.CYAN
 _GREEN = colorama.Fore.GREEN
 _YELLOW = colorama.Fore.YELLOW
 _RED = colorama.Fore.RED
-_MAGENTA = colorama.Fore.MAGENTA
-_WHITE = colorama.Fore.WHITE
 _LIGHT_BLACK = colorama.Fore.LIGHTBLACK_EX
-
-
-def set_no_color() -> None:
-    """Disable all ANSI styling — useful for CI logs or piping."""
-    global _RESET, _DIM, _BRIGHT, _BOLD
-    global _CYAN, _GREEN, _YELLOW, _RED, _MAGENTA, _WHITE, _LIGHT_BLACK
-    global _BOLD_GREEN
-    _RESET = _DIM = _BRIGHT = _BOLD = ""
-    _CYAN = _GREEN = _YELLOW = _RED = _MAGENTA = _WHITE = _LIGHT_BLACK = ""
-    _BOLD_GREEN = ""
-
 
 _BOLD_GREEN = f"{_BOLD}{_GREEN}"
 
 
+def set_no_color() -> None:
+    global _RESET, _DIM, _BRIGHT, _BOLD
+    global _CYAN, _GREEN, _YELLOW, _RED, _LIGHT_BLACK, _BOLD_GREEN
+    _RESET = _DIM = _BRIGHT = _BOLD = ""
+    _CYAN = _GREEN = _YELLOW = _RED = _LIGHT_BLACK = ""
+    _BOLD_GREEN = ""
+
+
 # ---------------------------------------------------------------------------
-# Public helpers
+# Tool display — matches claude-code's ↳ prefix pattern
 # ---------------------------------------------------------------------------
+
+def tool_call(name: str, params: str) -> str:
+    """Tool call header — matches claude-code '↳ ToolName(params)'."""
+    return f"  {_DIM}↳ {_CYAN}{name}{_RESET}{_DIM}({params}){_RESET}"
+
+
+def tool_running(name: str, params: str, activity: str = "") -> str:
+    """Tool executing — '↳ ToolName(params) ... ⏳ activity'."""
+    label = activity or "..."
+    return f"  {_DIM}↳ {_CYAN}{name}{_RESET}{_DIM}({params}){_RESET} {_DIM}  ...  {label}{_RESET}"
+
+
+def tool_done(result: str, max_len: int = 200) -> str:
+    """Tool result — '  ↳ ✓ result_summary' (claude-code style)."""
+    if len(result) > max_len:
+        result = result[:max_len] + "..."
+    first_line = result.split("\n")[0].strip()
+    return f"  {_DIM}↳{_RESET} {_GREEN}✓{_RESET} {_DIM}{first_line}{_RESET}"
+
+
+def tool_error(result: str, max_len: int = 200) -> str:
+    """Tool error — '  ↳ ✗ error'."""
+    if len(result) > max_len:
+        result = result[:max_len] + "..."
+    first_line = result.split("\n")[0].strip()
+    return f"  {_DIM}↳{_RESET} {_RED}✗{_RESET} {_RED}{first_line}{_RESET}"
+
+
+# -- Legacy compat aliases (kept for existing callers) -----------------------
+
 
 def tool_header(name: str, params: str) -> str:
-    """``[tool] name(params)`` — cyan label, bright name, dim args."""
-    return f"  {_DIM}[{_RESET}{_CYAN}tool{_RESET}{_DIM}]{_RESET} {_BRIGHT}{name}{_RESET}{_DIM}({params}){_RESET}"
+    """Legacy compat — use tool_call instead."""
+    return tool_call(name, params)
 
 
-def tool_result(text: str) -> str:
-    """Indented, dimmed result line."""
-    return f"  {_DIM}{text}{_RESET}"
-
-
-def assistant_text(text: str) -> str:
-    """Clean assistant output — no extra styling."""
-    return text
-
+# ---------------------------------------------------------------------------
+# Permission display
+# ---------------------------------------------------------------------------
 
 def permission_prompt(text: str) -> str:
-    """``[auth] message`` — yellow label, bright text."""
-    return f"  {_YELLOW}[auth]{_RESET} {_BRIGHT}{text}{_RESET}"
+    """Permission prompt — yellow [auth] label (matches claude-code)."""
+    return f"\n  {_YELLOW}[auth]{_RESET} {text}"
 
 
-def denied(text: str) -> str:
-    """Denial message — red."""
+def permission_denied(text: str) -> str:
+    """Permission denied — red."""
     return f"  {_RED}{text}{_RESET}"
 
 
-def error(text: str) -> str:
-    """Error — red bold."""
+def denied(text: str) -> str:
+    """Denial / blocked message."""
     return f"  {_RED}{_BOLD}{text}{_RESET}"
+
+
+def blocked(text: str) -> str:
+    """Self-destruct blocked message."""
+    return f"\n  {_RED}{_BOLD}BLOCKED:{_RESET} {_RED}{text}{_RESET}"
+
+
+# ---------------------------------------------------------------------------
+# Messages
+# ---------------------------------------------------------------------------
+
+def assistant_text(text: str) -> str:
+    """Assistant output — no extra styling, clean."""
+    return text
+
+
+def error(text: str) -> str:
+    """Error message."""
+    return f"  {_RED}{text}{_RESET}"
 
 
 def info(text: str) -> str:
@@ -88,10 +127,29 @@ def success(text: str) -> str:
     return f"  {_GREEN}{text}{_RESET}"
 
 
+def warning(text: str) -> str:
+    """Warning — yellow."""
+    return f"  {_YELLOW}{text}{_RESET}"
+
+
 def compact(before: int, after: int) -> str:
-    """Compaction notice — dimmed."""
+    """Compaction notice."""
     return f"  {_DIM}[compacted {before} → {after} messages]{_RESET}"
 
+
+def turn_warning(count: int) -> str:
+    """Turn count warning — when tool rounds get high."""
+    return f"\n  {_YELLOW}[{count} tool rounds — still working, Ctrl+C to stop]{_RESET}\n"
+
+
+def turn_limit(count: int) -> str:
+    """Turn limit reached — forcing wrap-up."""
+    return f"\n  {_YELLOW}[{count} rounds, wrapping up]{_RESET}\n"
+
+
+# ---------------------------------------------------------------------------
+# Banner & layout
+# ---------------------------------------------------------------------------
 
 def banner_line(label: str, value: str) -> str:
     """Aligned key-value for startup banner."""
@@ -99,17 +157,10 @@ def banner_line(label: str, value: str) -> str:
 
 
 def bold(text: str) -> str:
-    """Bold text — no leading newline."""
     return f"{_BOLD}{text}{_RESET}"
 
 
-def section(title: str) -> str:
-    """Bold section header."""
-    return f"\n{_BOLD}{title}{_RESET}"
-
-
 def hr_fixed(width: int = 50) -> str:
-    """Dimmed horizontal rule of fixed width."""
     try:
         "─".encode(sys.stdout.encoding)
         ch = "─"
@@ -119,44 +170,42 @@ def hr_fixed(width: int = 50) -> str:
 
 
 def hr() -> str:
-    """Dimmed horizontal rule (full terminal width)."""
+    """Full-width horizontal rule."""
     try:
         import shutil
         w = shutil.get_terminal_size().columns
     except Exception:
         w = 80
-    # Try box-drawing, fall back to ASCII dash
     try:
         "─".encode(sys.stdout.encoding)
         ch = "─"
     except (UnicodeEncodeError, AttributeError):
         ch = "-"
-    return _DIM + ch * w + _RESET
-
-
-def path_str(p: str | Path) -> str:
-    """Dimmed path."""
-    return f"{_DIM}{p}{_RESET}"
+    return _DIM + ch * min(w, 120) + _RESET
 
 
 def prompt() -> str:
-    """User-input prompt — bold green chevron."""
-    return f"{_GREEN}{_BRIGHT}>{_RESET} "
+    """Prompt marker."""
+    return f"{_BOLD_GREEN}>{_RESET}"
 
 
 # ---------------------------------------------------------------------------
-# Interactive menu — keyboard navigation, Enter to confirm
+# Result formatting (legacy — used by old code paths)
+# ---------------------------------------------------------------------------
+
+def tool_result(text: str) -> str:
+    """Legacy compat — indented dimmed result."""
+    return f"  {_DIM}{text}{_RESET}"
+
+
+# ---------------------------------------------------------------------------
+# Select menu — interactive keyboard navigation
 # ---------------------------------------------------------------------------
 
 def select_menu(options: list[str]) -> int:
-    """Show an interactive menu with keyboard navigation.
+    """Show interactive menu with ↑↓/jk/ws navigation, Enter to confirm.
 
-    Navigation:  ↑ / ↓  or  w / s  or  j / k
-    Confirm:     Enter / Space
-    Cancel:      Esc / q
-
-    Returns the index of the selected option (0-based).
-    Returns -1 if cancelled.
+    Returns index (0-based), -1 if cancelled (Esc/q).
     """
     n = len(options)
     if n == 0:
@@ -174,7 +223,11 @@ def select_menu(options: list[str]) -> int:
             else:
                 print(f"    {_DIM}  {opt}{_RESET}   ")
 
-    # Hide cursor during menu
+    # Drain leftover stdin + reset UTF-8 buffer
+    global _utf8_buf
+    _utf8_buf = b""
+    _drain_console_buffer()
+
     sys.stdout.write("\033[?25l")
     sys.stdout.flush()
 
@@ -185,7 +238,6 @@ def select_menu(options: list[str]) -> int:
             if ch in ("\r", "\n", " "):
                 break
             if ch == "\x1b":
-                # ESC sequence
                 seq = _getch()
                 if seq == "[":
                     arrow = _getch()
@@ -194,9 +246,8 @@ def select_menu(options: list[str]) -> int:
                     elif arrow == "B":
                         selected = (selected + 1) % n
                 else:
-                    return -1  # plain ESC = cancel
+                    return -1
             elif ch in ("\x00", "\xe0"):
-                # Windows extended key prefix
                 k = _getch()
                 if k == "H":
                     selected = (selected - 1) % n
@@ -209,76 +260,77 @@ def select_menu(options: list[str]) -> int:
             elif ch == "q":
                 return -1
 
-            # Move cursor up and re-render
             sys.stdout.write(f"\033[{n}A")
             sys.stdout.flush()
             _render()
     finally:
-        sys.stdout.write("\033[?25h")  # show cursor
+        sys.stdout.write("\033[?25h")
         sys.stdout.flush()
 
     return selected
 
 
 # ---------------------------------------------------------------------------
-# Cross-platform single-char input
+# Input reader
 # ---------------------------------------------------------------------------
 
 def readline(prompt_text: str = "> ") -> str:
-    """Read a line of input. Multi-line pastes are joined with spaces."""
+    """Read a line of input. Multi-line pastes are joined."""
     sys.stdout.write(prompt_text)
     sys.stdout.flush()
     first = input()
     remaining = _drain_stdin()
     if not remaining:
         return first
-    # Join all pasted lines into one, replacing newlines with spaces
     return first + " " + " ".join(remaining)
 
 
+# ---------------------------------------------------------------------------
+# Internal: stdin drain + single-char input
+# ---------------------------------------------------------------------------
+
+def _drain_console_buffer() -> None:
+    """Drain pending stdin bytes before entering raw-input mode."""
+    if sys.platform == "win32":
+        import msvcrt
+        while msvcrt.kbhit():
+            msvcrt.getch()
+    else:
+        import select
+        while select.select([sys.stdin], [], [], 0.0)[0]:
+            sys.stdin.read(1)
+
+
 def _drain_stdin() -> list[str]:
-    """Read any immediately-available lines from stdin.  Empty = no paste."""
     lines: list[str] = []
     if sys.platform == "win32":
         import msvcrt
-        # Give a tiny window for the paste buffer to fill
         import time
         time.sleep(0.02)
         while msvcrt.kbhit():
             try:
-                line = input()
-                lines.append(line)
+                lines.append(input())
             except (EOFError, KeyboardInterrupt):
                 break
     else:
         import select
-        # Non-blocking check: is more data already in the buffer?
         while select.select([sys.stdin], [], [], 0.0)[0]:
             try:
-                line = input()
-                lines.append(line)
+                lines.append(input())
             except (EOFError, KeyboardInterrupt):
                 break
     return lines
 
 
-# ---------------------------------------------------------------------------
-# Cross-platform single-char input (for interactive menus)
-# ---------------------------------------------------------------------------
+_utf8_buf: bytes = b""
+
 
 def _getch() -> str:
-    """Read a single character from stdin without waiting for Enter.
-
-    On Windows, accumulates raw bytes from ``msvcrt.getch`` and decodes
-    them as UTF-8 so that multi-byte characters (Chinese, emoji, etc.)
-    are returned correctly as a single Python string.
-    """
     if sys.platform == "win32":
         import msvcrt
         return _getch_win(msvcrt)
     else:
-        import termios
-        import tty
+        import termios, tty
         fd = sys.stdin.fileno()
         old = termios.tcgetattr(fd)
         try:
@@ -288,66 +340,34 @@ def _getch() -> str:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
-# ---------------------------------------------------------------------------
-# Windows: stateful UTF-8 decoder for raw console bytes
-# ---------------------------------------------------------------------------
-
-_utf8_buf: bytes = b""
-
-
 def _getch_win(msvcrt) -> str:
-    """Accumulate console bytes until a complete UTF-8 character emerges."""
     global _utf8_buf
-
-    # Drain leftover raw bytes from a previous failed decode first
-    # (e.g. the scan-code byte after a Windows extended-key prefix).
     while _utf8_buf:
         first = _utf8_buf[0]
         if first <= 0x7F or not _can_be_utf8(_utf8_buf[:1]):
             _utf8_buf = _utf8_buf[1:]
             return chr(first)
-        break  # partial UTF-8 — need more bytes from console
+        break
 
     while True:
         b = msvcrt.getch()
         _utf8_buf += b
-
         try:
             s = _utf8_buf.decode("utf-8")
             _utf8_buf = b""
             if len(s) > 1:
-                _utf8_buf = s[1:].encode("utf-8")
-            return s[0]
+                return s
+            return s
         except UnicodeDecodeError:
-            if not _can_be_utf8(_utf8_buf):
-                raw = chr(_utf8_buf[0])
+            if len(_utf8_buf) >= 4:
                 _utf8_buf = _utf8_buf[1:]
-                return raw
+                return chr(_utf8_buf[0])
             continue
 
 
-def _can_be_utf8(data: bytes) -> bool:
-    """Return True if *data* could be the prefix of a valid UTF-8 sequence."""
-    if not data:
+def _can_be_utf8(byte_seq: bytes) -> bool:
+    try:
+        byte_seq.decode("utf-8")
         return True
-    first = data[0]
-    if first <= 0x7F:          # ASCII
-        return True
-    if 0xC0 <= first <= 0xDF:  # 2-byte lead
-        if len(data) == 1:
-            return True
-        return 0x80 <= data[1] <= 0xBF
-    if 0xE0 <= first <= 0xEF:  # 3-byte lead
-        if len(data) == 1:
-            return True
-        if not (0x80 <= data[1] <= 0xBF):
-            return False
-        if len(data) == 2:
-            return True
-        return 0x80 <= data[2] <= 0xBF
-    if 0xF0 <= first <= 0xF7:  # 4-byte lead
-        for i in range(1, min(len(data), 4)):
-            if not (0x80 <= data[i] <= 0xBF):
-                return False
-        return True
-    return False  # invalid lead byte
+    except UnicodeDecodeError:
+        return False

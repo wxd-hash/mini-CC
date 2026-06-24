@@ -1,13 +1,15 @@
-"""Terminal REPL — banner, prompt, input loop, slash-command routing."""
+"""Terminal REPL — banner, prompt, input loop, slash-command routing.
+
+Enhanced with cc-mini features: auto-compact, skill commands, history listing.
+"""
 
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from src import terminal as term
-from src.agent.loop import MiniClaudeAgent
-from src.commands import handle_perm, handle_tools, handle_tool
-from src.security.permission import PermissionManager
+from src.security.permission import PermissionChecker
 from src.tools.registry import ToolRegistry
 
 
@@ -32,11 +34,11 @@ def print_banner(provider, logger, workspace, permission) -> None:
         term.bold("Mini Claude Code"),
         hr_fixed,
         term.banner_line("Provider", f"{provider.provider_name}  ({provider.model})"),
-        term.banner_line("Session", logger.path.name),
+        term.banner_line("Session", logger.path.name if hasattr(logger, 'path') else str(logger.session_id)[:16]),
         term.banner_line("Workspace", str(workspace.root)),
         term.banner_line("Mode", permission.mode.value),
         hr_fixed,
-        term.info("/tools  /tool  /perm  /clear  /reload  /exit"),
+        term.info("/tools  /tool  /perm  /skills  /history  /clear  /reload  /exit"),
     ]
 
     while len(cat) < len(info):
@@ -57,9 +59,15 @@ def print_banner(provider, logger, workspace, permission) -> None:
 
 def run_repl(
     registry: ToolRegistry,
-    permission: PermissionManager,
-    agent: MiniClaudeAgent,
+    permission: PermissionChecker,
+    engine: Any,
+    log_dir: Path | None = None,
+    workspace: str = "",
+    session_store: Any = None,
 ) -> None:
+    """Interactive REPL loop with slash-command routing."""
+    from src.commands import handle_command, do_resume
+
     _mode_names = {"plan": "PLAN", "ask": "ASK", "auto": "AUTO"}
 
     def _prompt() -> str:
@@ -70,6 +78,11 @@ def run_repl(
         if m == "auto":
             return f"  {term._GREEN}{_mode_names.get(m, m)}{term._RESET} {term._BOLD_GREEN}>{term._RESET}  "
         return f"  {term._CYAN}{_mode_names.get(m, m)}{term._RESET} {term._BOLD_GREEN}>{term._RESET}  "
+
+    if log_dir is None:
+        log_dir = Path.cwd() / ".sessions"
+    if not workspace:
+        workspace = str(Path.cwd())
 
     first = True
     while True:
@@ -87,35 +100,47 @@ def run_repl(
         if not stripped:
             continue
 
-        if stripped == "/exit":
-            break
+        # Slash commands
+        if stripped.startswith("/"):
+            parts = stripped[1:].split(maxsplit=1)
+            cmd_name = parts[0].lower()
+            cmd_args = parts[1] if len(parts) > 1 else ""
 
-        if stripped == "/tools":
-            handle_tools(registry)
+            if cmd_name in ("exit", "quit"):
+                break
+
+            if cmd_name == "resume":
+                resume_arg = True if not cmd_args else cmd_args
+                do_resume(engine, log_dir, workspace, resume_arg)
+                continue
+
+            if handle_command(
+                cmd_name, cmd_args,
+                engine=engine,
+                registry=registry,
+                permission=permission,
+                log_dir=log_dir,
+                workspace=workspace,
+                session_store=session_store,
+            ):
+                continue
+
+            print(term.info(f"Unknown command: /{cmd_name}. Type /help or see available commands."))
             continue
 
-        if stripped.startswith("/perm "):
-            handle_perm(permission, stripped[6:])
-            continue
-
-        if stripped.startswith("/tool "):
-            handle_tool(registry, permission, stripped[6:])
-            continue
-
-        if stripped == "/clear":
-            agent.clear()
-            continue
-
-        if stripped == "/reload":
-            agent.reload()
-            continue
-
+        # Normal query → submit to engine (NEVER exit on error)
         try:
-            agent.run(stripped)
+            engine.run(stripped)
         except KeyboardInterrupt:
             print()
             continue
+        except Exception as e:
+            # Catch ALL errors — the REPL must NEVER die
+            print()
+            print(term.error(f"Engine error (recovered): {e}"))
+            print(term.info("The agent is still alive. You can continue."))
+            continue
 
-    # Clean up the input box on exit
+    # Clean up the input box on exit (only reached via /exit, /quit, or Ctrl+C twice)
     print("\033[2K\033[1A\033[2K\033[1A\033[2K", end="")
     sys.stdout.flush()

@@ -1,16 +1,29 @@
-"""Abstract base class for all tools."""
+"""Tool base protocol — matches cc-mini's Tool + ToolResult pattern."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any
+
+
+@dataclass
+class ToolResult:
+    """Result from a tool execution.
+
+    Matches cc-mini's ToolResult: content is a string sent back to the LLM;
+    is_error flags failures (shown to user but not treated as a fatal stop).
+    """
+
+    content: str
+    is_error: bool = False
 
 
 class Tool(ABC):
     """Abstract tool that the agent can invoke.
 
-    Subclasses must provide name, description, input_schema properties
-    and implement run(args).
+    Subclasses provide: name, description, input_schema, execute(),
+    is_read_only(), get_activity_description(), and to_api_schema().
     """
 
     @property
@@ -34,7 +47,49 @@ class Tool(ABC):
         """
         ...
 
+    # -- new methods matching cc-mini Tool protocol ---------------------------
+
+    def is_read_only(self) -> bool:
+        """Return True if this tool never mutates state.
+
+        Read-only tools can be executed in parallel batches.
+        Default: False (conservative).
+        """
+        return False
+
+    def get_activity_description(self, **kwargs: Any) -> str | None:
+        """Return a human-readable one-liner describing what's about to happen.
+
+        Shown in the terminal as a spinner label while the tool runs.
+        Default: name + first meaningful value from kwargs.
+        """
+        parts = [self.name]
+        for key, val in kwargs.items():
+            if isinstance(val, str) and len(val) < 80:
+                parts.append(val)
+                break
+        return " ".join(parts)
+
+    def to_api_schema(self) -> dict[str, Any]:
+        """Return a provider-neutral tool declaration dict.
+
+        Has keys: name, description, input_schema.
+        Providers convert this to their native format.
+        """
+        return {
+            "name": self.name,
+            "description": self.description,
+            "input_schema": self.input_schema,
+        }
+
     @abstractmethod
-    def run(self, args: dict[str, Any]) -> str:
-        """Execute the tool with the given arguments, return a string result."""
+    def execute(self, **kwargs: Any) -> ToolResult:
+        """Execute the tool with keyword arguments, return a ToolResult."""
         ...
+
+    # -- legacy bridge: run() delegates to execute() --------------------------
+
+    def run(self, args: dict[str, Any]) -> str:
+        """Legacy compatibility — calls execute(**args) and returns content."""
+        result = self.execute(**args)
+        return result.content

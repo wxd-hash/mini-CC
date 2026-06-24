@@ -1,18 +1,241 @@
-"""Append-only JSONL session logger + resume helpers."""
+"""Session persistence — matches cc-mini's SessionStore pattern.
+
+SessionStore: auto-saves messages as JSONL + metadata as meta.json.
+Also retains the original SessionLogger class and free functions for backward compat.
+"""
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 
+# ---------------------------------------------------------------------------
+# SessionStore (matches cc-mini)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SessionMeta:
+    """Metadata for a saved session."""
+    session_id: str
+    cwd: str = ""
+    model: str = ""
+    mode: str = "ask"
+    title: str = ""
+    created_at: str = ""
+
+
+class SessionStore:
+    """Auto-save session messages to a JSONL file + meta.json.
+
+    Matches cc-mini's SessionStore: append_message() on every turn,
+    list_sessions() for resume picker, load_session() for restore.
+    """
+
+    MAX_MESSAGE_CHARS = 8000
+
+    def __init__(
+        self,
+        cwd: str = "",
+        model: str = "",
+        session_id: str | None = None,
+        mode: str = "ask",
+        sessions_dir: Path | None = None,
+    ) -> None:
+        self.cwd = cwd
+        self.model = model
+        self.mode = mode
+        if session_id is None:
+            session_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        self.session_id = session_id
+        self._ws_name = _workspace_dir_name(cwd) if cwd else "_default"
+        if sessions_dir is None:
+            sessions_dir = Path.cwd() / ".sessions"
+        self._dir = sessions_dir / self._ws_name
+        self._dir.mkdir(parents=True, exist_ok=True)
+        self._path = self._dir / f"session-{session_id}.jsonl"
+        self._meta_path = self._dir / f"session-{session_id}.meta.json"
+        self._file = self._path.open("a", encoding="utf-8")
+        self._msg_count = 0
+        self._first_user_text = ""
+        self._write_meta()
+
+    # -- properties -----------------------------------------------------------
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    @property
+    def title(self) -> str:
+        return self._first_user_text[:60] if self._first_user_text else "(new session)"
+
+    # -- message persistence --------------------------------------------------
+
+    def append_message(self, message: dict[str, Any]) -> None:
+        """Append one message to the session JSONL file."""
+        try:
+            role = message.get("role", "?")
+            content = message.get("content", "")
+
+            # Truncate long content for storage
+            stored_content = content
+            if isinstance(stored_content, str) and len(stored_content) > self.MAX_MESSAGE_CHARS:
+                stored_content = stored_content[:self.MAX_MESSAGE_CHARS] + (
+                    f"\n... [truncated at {self.MAX_MESSAGE_CHARS} chars in log]"
+                )
+
+            entry = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "role": role,
+                "content": stored_content,
+            }
+            line = json.dumps(entry, ensure_ascii=False, default=str)
+            self._file.write(line + "\n")
+            self._file.flush()
+            self._msg_count += 1
+
+            # Capture first user text as session title
+            if not self._first_user_text and role == "user":
+                text = content if isinstance(content, str) else str(content)[:100]
+                self._first_user_text = text.split("\n")[0].strip()
+                self._write_meta()
+        except Exception:
+            pass  # don't break the conversation on I/O errors
+
+    def close(self) -> None:
+        try:
+            self._file.close()
+        except Exception:
+            pass
+
+    # -- metadata -------------------------------------------------------------
+
+    def _write_meta(self) -> None:
+        try:
+            meta = {
+                "session_id": self.session_id,
+                "cwd": self.cwd,
+                "model": self.model,
+                "mode": self.mode,
+                "title": self.title,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            self._meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+        except Exception:
+            pass
+
+    # -- static helpers -------------------------------------------------------
+
+    @staticmethod
+    def list_sessions(
+        cwd: str,
+        sessions_dir: Path | None = None,
+    ) -> list[SessionMeta]:
+        """Return sorted list of SessionMeta for the given workspace."""
+        if sessions_dir is None:
+            sessions_dir = Path.cwd() / ".sessions"
+        ws_name = _workspace_dir_name(cwd) if cwd else "_default"
+        ws_dir = sessions_dir / ws_name
+        if not ws_dir.is_dir():
+            return []
+
+        result: list[SessionMeta] = []
+        for meta_file in sorted(ws_dir.glob("session-*.meta.json"), reverse=True):
+            try:
+                data = json.loads(meta_file.read_text(encoding="utf-8"))
+                result.append(SessionMeta(
+                    session_id=data.get("session_id", meta_file.stem.replace("session-", "").replace(".meta", "")),
+                    cwd=data.get("cwd", cwd),
+                    model=data.get("model", ""),
+                    mode=data.get("mode", "ask"),
+                    title=data.get("title", "(empty)"),
+                    created_at=data.get("created_at", ""),
+                ))
+            except Exception:
+                continue
+        # Sort by session_id descending (which is timestamp-based)
+        result.sort(key=lambda m: m.session_id, reverse=True)
+        return result
+
+    @staticmethod
+    def load_session(
+        session_id: str,
+        cwd: str,
+        sessions_dir: Path | None = None,
+    ) -> tuple[SessionMeta | None, list[dict[str, Any]]]:
+        """Load a session by ID. Returns (meta, messages)."""
+        if sessions_dir is None:
+            sessions_dir = Path.cwd() / ".sessions"
+        ws_name = _workspace_dir_name(cwd) if cwd else "_default"
+        ws_dir = sessions_dir / ws_name
+
+        jsonl_path = ws_dir / f"session-{session_id}.jsonl"
+        meta_path = ws_dir / f"session-{session_id}.meta.json"
+
+        # Load meta
+        meta: SessionMeta | None = None
+        if meta_path.is_file():
+            try:
+                data = json.loads(meta_path.read_text(encoding="utf-8"))
+                meta = SessionMeta(**data)
+            except Exception:
+                pass
+
+        # Load messages
+        messages: list[dict[str, Any]] = []
+        if jsonl_path.is_file():
+            try:
+                with jsonl_path.open("r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            ev = json.loads(line)
+                            messages.append({
+                                "role": ev.get("role", "user"),
+                                "content": ev.get("content", ""),
+                            })
+                        except json.JSONDecodeError:
+                            continue
+            except Exception:
+                pass
+
+        return meta, messages
+
+    @staticmethod
+    def cleanup_empty(path: Path) -> None:
+        """Delete a session file if it has no user messages."""
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    try:
+                        ev = json.loads(line.strip())
+                        if ev.get("role") == "user":
+                            return  # has content
+                    except json.JSONDecodeError:
+                        continue
+            path.unlink(missing_ok=True)
+            # Also clean up meta file
+            meta_path = path.with_suffix(".meta.json")
+            meta_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Legacy SessionLogger (kept for backward compatibility)
+# ---------------------------------------------------------------------------
+
 class SessionLogger:
     """Writes structured session events to a timestamped JSONL file.
 
-    Events are append-only — never overwritten.  Tool results are capped at
-    *MAX_RESULT_CHARS* in the log.
+    Retained for backward compatibility with existing code that uses
+    the event-type API. New code should use SessionStore.
     """
 
     MAX_RESULT_CHARS = 4000
@@ -22,10 +245,6 @@ class SessionLogger:
         self._file = path.open("a", encoding="utf-8")
         if workspace:
             self._write({"type": "session_start", "workspace": workspace})
-
-    # ------------------------------------------------------------------
-    # Event API (one method per event type)
-    # ------------------------------------------------------------------
 
     def user_input(self, content: str) -> None:
         self._write({"type": "user_input", "content": content})
@@ -59,10 +278,6 @@ class SessionLogger:
     def close(self) -> None:
         self._file.close()
 
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
-
     def _write(self, entry: dict[str, Any]) -> None:
         entry["ts"] = datetime.now(timezone.utc).isoformat()
         try:
@@ -74,18 +289,14 @@ class SessionLogger:
 
 
 # ---------------------------------------------------------------------------
-# Resume helpers (free functions, not bound to a SessionLogger instance)
+# Resume helpers (free functions)
 # ---------------------------------------------------------------------------
 
 MAX_RESUME_EVENTS = 200
 
 
 def load_session_messages(path: Path, max_events: int = MAX_RESUME_EVENTS) -> list[dict[str, Any]]:
-    """Reconstruct provider-agnostic messages from a session log.
-
-    Returns a list of ``{"role": "user"|"assistant", "content": str}``
-    messages that can be injected into any provider's history.
-    """
+    """Reconstruct provider-agnostic messages from a session log."""
     if not path.is_file():
         raise FileNotFoundError(f"Session file not found: {path}")
 
@@ -104,12 +315,11 @@ def load_session_messages(path: Path, max_events: int = MAX_RESUME_EVENTS) -> li
         events = events[-max_events:]
 
     messages: list[dict[str, Any]] = []
-    pending_tools: list[str] = []  # tool names waiting for results
+    pending_tools: list[str] = []
 
     for ev in events:
         t = ev.get("type", "?")
         if t == "user_input":
-            # Flush any pending tool entries first
             if pending_tools:
                 messages.append({"role": "assistant", "content": f"[called: {', '.join(pending_tools)}]"})
                 pending_tools.clear()
@@ -134,7 +344,6 @@ def load_session_messages(path: Path, max_events: int = MAX_RESUME_EVENTS) -> li
             content = ev.get("content", "")
             if len(content) > 500:
                 content = content[:500] + "..."
-            # Emit as a user message so the LLM sees tool call + result as a pair
             tool_text = f"[tool] {name}\n→ {content}"
             if pending_tools:
                 tool_text = f"{pending_tools.pop(0)}\n{tool_text}"
@@ -144,7 +353,6 @@ def load_session_messages(path: Path, max_events: int = MAX_RESUME_EVENTS) -> li
             text = f"[{t}] {ev.get('name', '')} {ev.get('message', '')}".strip()
             messages.append({"role": "user", "content": text})
 
-    # Flush remaining
     if pending_tools:
         messages.append({"role": "assistant", "content": f"[called: {', '.join(pending_tools)}]"})
 
@@ -153,9 +361,11 @@ def load_session_messages(path: Path, max_events: int = MAX_RESUME_EVENTS) -> li
 
 def _workspace_dir_name(workspace: str) -> str:
     p = Path(workspace).resolve()
-    # Normalize: remove drive letter colon, replace separators with underscore
-    name = p.as_posix().replace(":", "").lstrip("/").replace("/", "_")
-    # Guard against empty result
+    # Normalize: remove colon, replace path separators AND spaces with underscore
+    name = p.as_posix().replace(":", "").lstrip("/").replace(" ", "_").replace("/", "_")
+    # Also collapse consecutive underscores
+    while "__" in name:
+        name = name.replace("__", "_")
     return name or "_default"
 
 
@@ -166,7 +376,7 @@ def find_latest_session(sessions_dir: Path, workspace: str = "") -> Path | None:
 
 
 def list_sessions(sessions_dir: Path, workspace: str = "") -> list[tuple[Path, str, str]]:
-    """Return ``[(path, name, last_ts), ...]`` sorted newest-first."""
+    """Return [(path, name, last_ts), ...] sorted newest-first."""
     ws_name = _workspace_dir_name(workspace) if workspace else "_default"
     ws_dir = sessions_dir / ws_name
     if not ws_dir.is_dir():
@@ -185,7 +395,6 @@ def list_sessions(sessions_dir: Path, workspace: str = "") -> list[tuple[Path, s
 
 
 def _session_last_ts(path: Path) -> str | None:
-    """Extract the last event timestamp from a session file."""
     last_ts: str | None = None
     try:
         with path.open("r", encoding="utf-8") as fh:
@@ -207,22 +416,21 @@ def _session_last_ts(path: Path) -> str | None:
 
 
 def _session_file_ts(path: Path) -> str:
-    """Fallback: use file modification time."""
     ts = path.stat().st_mtime
     dt = datetime.fromtimestamp(ts, tz=timezone.utc).astimezone()
     return dt.strftime("%m-%d %H:%M")
 
 
 def _session_name(path: Path) -> str:
-    """Extract a short name from the first user message in the session."""
     try:
         with path.open("r", encoding="utf-8") as fh:
             for line in fh:
                 try:
                     ev = json.loads(line.strip())
-                    if ev.get("type") == "user_input":
+                    # Support both legacy SessionLogger format (type=user_input)
+                    # and new SessionStore format (role=user)
+                    if ev.get("type") == "user_input" or ev.get("role") == "user":
                         content = ev.get("content", "")
-                        # Use first line, truncate
                         name = content.split("\n")[0].strip()
                         return name[:60] + ("..." if len(name) > 60 else "")
                 except json.JSONDecodeError:
@@ -239,8 +447,9 @@ def cleanup_empty(path: Path) -> None:
             for line in fh:
                 try:
                     ev = json.loads(line.strip())
-                    if ev.get("type") == "user_input":
-                        return  # has content, keep it
+                    # Support both legacy (type=user_input) and new (role=user) formats
+                    if ev.get("type") == "user_input" or ev.get("role") == "user":
+                        return
                 except json.JSONDecodeError:
                     continue
         path.unlink(missing_ok=True)
@@ -249,11 +458,7 @@ def cleanup_empty(path: Path) -> None:
 
 
 def load_session_transcript(path: Path, max_events: int = MAX_RESUME_EVENTS) -> str:
-    """Read a JSONL session file and compress events into a compact transcript.
-
-    Only the last *max_events* events are included.  The result is a single
-    string suitable for injecting as a user message during resume.
-    """
+    """Read a JSONL session file and compress events into a compact transcript."""
     if not path.is_file():
         raise FileNotFoundError(f"Session file not found: {path}")
 
@@ -268,11 +473,9 @@ def load_session_transcript(path: Path, max_events: int = MAX_RESUME_EVENTS) -> 
             except json.JSONDecodeError:
                 continue
 
-    # Take tail
     if len(events) > max_events:
         events = events[-max_events:]
 
-    # Build transcript
     lines: list[str] = []
     for ev in events:
         t = ev.get("type", "?")

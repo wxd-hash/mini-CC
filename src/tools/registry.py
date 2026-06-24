@@ -8,7 +8,7 @@ from src.tools.base import Tool
 
 
 class ToolRegistry:
-    """Holds registered tools and provides lookup / Anthropic schema export."""
+    """Holds registered tools and provides lookup / schema export."""
 
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
@@ -18,11 +18,11 @@ class ToolRegistry:
     # ------------------------------------------------------------------
 
     def register(self, tool: Tool) -> None:
-        """Register a tool instance.  Replaces any existing tool with the same name."""
+        """Register a tool instance. Replaces any existing tool with the same name."""
         self._tools[tool.name] = tool
 
     def get_tool(self, name: str) -> Tool:
-        """Look up a tool by name.  Raises KeyError if not found."""
+        """Look up a tool by name. Raises KeyError if not found."""
         if name not in self._tools:
             raise KeyError(f"Unknown tool: {name}")
         return self._tools[name]
@@ -31,20 +31,21 @@ class ToolRegistry:
         """Return (name, description) for every registered tool."""
         return [(t.name, t.description) for t in self._tools.values()]
 
+    def items(self):
+        """Iterate (name, tool) pairs."""
+        return self._tools.items()
+
+    def values(self):
+        """Iterate tool instances."""
+        return self._tools.values()
+
     # ------------------------------------------------------------------
-    # Provider-native schemas
+    # Provider-native schemas (built from to_api_schema())
     # ------------------------------------------------------------------
 
     def to_anthropic(self) -> list[dict[str, Any]]:
         """Export tool definitions for the Anthropic Messages API."""
-        return [
-            {
-                "name": t.name,
-                "description": t.description,
-                "input_schema": t.input_schema,
-            }
-            for t in self._tools.values()
-        ]
+        return [t.to_api_schema() for t in self._tools.values()]
 
     def to_openai(self) -> list[dict[str, Any]]:
         """Export tool definitions for the OpenAI / DeepSeek API."""
@@ -52,10 +53,10 @@ class ToolRegistry:
             {
                 "type": "function",
                 "function": {
-                    "name": t.name,
-                    "description": t.description,
-                    "parameters": t.input_schema,
+                    "name": s["name"],
+                    "description": s["description"],
+                    "parameters": s["input_schema"],
                 },
             }
-            for t in self._tools.values()
+            for s in (t.to_api_schema() for t in self._tools.values())
         ]

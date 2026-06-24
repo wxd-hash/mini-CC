@@ -1,3 +1,6 @@
-from .loop import MiniClaudeAgent
+from .loop import Engine, AbortedError
 
-__all__ = ["MiniClaudeAgent"]
+# Legacy alias
+MiniClaudeAgent = Engine
+
+__all__ = ["Engine", "AbortedError", "MiniClaudeAgent"]

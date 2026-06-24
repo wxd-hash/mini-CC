@@ -1,3 +1,6 @@
-from .permission import PermissionManager
+from .permission import PermissionChecker, Mode
 
-__all__ = ["PermissionManager"]
+# Legacy alias for backward compatibility
+PermissionManager = PermissionChecker
+
+__all__ = ["PermissionChecker", "PermissionManager", "Mode"]

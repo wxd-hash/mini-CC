@@ -1,4 +1,4 @@
-"""Shell execution tool."""
+"""Shell execution tool — matches cc-mini BashTool pattern."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from src.tools.base import Tool
+from src.tools.base import Tool, ToolResult
 
 
 class RunShell(Tool):
@@ -36,9 +36,7 @@ class RunShell(Tool):
     @property
     def description(self) -> str:
         return (
-            "Run a shell command inside the workspace directory. "
-            f"Timeout after {self.TIMEOUT}s. "
-            "Returns exit code, stdout, and stderr."
+            f"在工作区目录内执行 shell 命令（超时 {self.TIMEOUT} 秒）。返回退出码、stdout 和 stderr。"
         )
 
     @property
@@ -50,21 +48,68 @@ class RunShell(Tool):
                     "type": "string",
                     "description": "Shell command to execute",
                 },
+                "run_in_background": {
+                    "type": "boolean",
+                    "description": (
+                        "Set to true to run in background (for servers, watchers). "
+                        "You'll be notified when it completes. Do NOT poll or check."
+                    ),
+                },
+                "timeout": {
+                    "type": "number",
+                    "description": f"Optional timeout in ms (default: {self.TIMEOUT * 1000})",
+                },
             },
             "required": ["command"],
         }
 
+    # -- cc-mini protocol --------------------------------------------------
+
+    def get_activity_description(self, **kwargs: Any) -> str | None:
+        cmd = kwargs.get("command", "")
+        bg = kwargs.get("run_in_background", False)
+        prefix = "[bg] " if bg else ""
+        short = cmd[:60] + "..." if len(cmd) > 60 else cmd
+        return f"{prefix}Running: {short}" if short else "Running command"
+
     # ------------------------------------------------------------------
-    # Execution
+    # Execution — matches claude-code BashTool with auto-background
     # ------------------------------------------------------------------
 
-    def run(
-        self,
-        args: dict[str, Any],
-        permission_manager: Any = None,
-    ) -> str:
-        """Run the command.  *permission_manager* is reserved."""
-        command: str = args["command"]
+    # Long-running server patterns: auto-background instead of kill
+    _SERVER_PATTERNS = [
+        "uvicorn", "flask run", "python -m http", "gunicorn",
+        "npm run dev", "npm start", "node server", "next dev",
+        "cargo run", "go run", "java -jar", "docker compose up",
+        "docker run", "docker-compose",
+    ]
+
+    # Short timeout for auto-background (matches claude-code ASSISTANT_BLOCKING_BUDGET_MS)
+    BLOCKING_TIMEOUT = 15  # seconds — after this, auto-background
+    MAX_TIMEOUT = 600  # 10 minutes max
+
+    def execute(self, **kwargs: Any) -> ToolResult:
+        """Run the command. Auto-backgrounds long-running commands instead of killing.
+
+        Matches claude-code's pattern:
+        - Normal commands: run to completion (up to self.TIMEOUT seconds)
+        - Server commands or run_in_background=True: return immediately,
+          process keeps running, model gets PID
+        - Commands exceeding BLOCKING_TIMEOUT: auto-background instead of kill
+        """
+        command: str = kwargs.get("command", "")
+        run_in_background: bool = kwargs.get("run_in_background", False)
+        timeout_ms: float | None = kwargs.get("timeout")
+        timeout = (timeout_ms / 1000.0) if timeout_ms else self.TIMEOUT
+        timeout = min(timeout, self.MAX_TIMEOUT)
+
+        # Detect if this looks like a server/long-running command
+        is_server = any(p in command.lower() for p in self._SERVER_PATTERNS)
+        should_background = run_in_background or is_server
+
+        if should_background:
+            # Start in background, return immediately with PID
+            return self._run_background(command)
 
         stdout_f = tempfile.NamedTemporaryFile(
             mode="wb+", suffix=".stdout", delete=False
@@ -74,10 +119,8 @@ class RunShell(Tool):
         )
 
         try:
-            # Prepend venv to PATH so python/pip/pytest resolve correctly
             env = os.environ.copy()
             env["PATH"] = self._venv_bin + os.pathsep + env.get("PATH", "")
-            # Also set VIRTUAL_ENV so the subprocess knows it's in a venv
             env["VIRTUAL_ENV"] = str(Path(sys.executable).parent.parent)
 
             proc = subprocess.Popen(
@@ -89,51 +132,88 @@ class RunShell(Tool):
                 env=env,
             )
 
-            deadline = time.monotonic() + self.TIMEOUT
+            # First phase: wait up to BLOCKING_TIMEOUT for quick commands
+            deadline = time.monotonic() + min(self.BLOCKING_TIMEOUT, timeout)
             while True:
                 ret = proc.poll()
                 if ret is not None:
                     break
                 if time.monotonic() > deadline:
-                    self._kill_tree(proc)
-                    proc.wait(timeout=5)
-                    return (
-                        f"Error: command timed out after {self.TIMEOUT}s\n"
-                        f"  command: {command[:200]!r}"
-                    )
+                    # Auto-background: command is taking too long, detach
+                    stdout_f.flush()
+                    stderr_f.flush()
+                    stdout_f.seek(0)
+                    stderr_f.seek(0)
+                    so_far = _decode(stdout_f.read())[:2000]
+                    se_far = _decode(stderr_f.read())[:500]
+                    return ToolResult(content=(
+                        f"[auto-backgrounded after {self.BLOCKING_TIMEOUT}s] "
+                        f"PID {proc.pid} is still running in background.\n"
+                        f"This is NOT an error — the process continues.\n"
+                        f"Do NOT kill and restart. It's already running.\n"
+                        f"Output so far:\n{so_far}"
+                        + (f"\nstderr:\n{se_far}" if se_far else "")
+                    ))
                 time.sleep(0.1)
 
             stdout_f.flush()
             stderr_f.flush()
             stdout_f.seek(0)
             stderr_f.seek(0)
-            stdout_bytes = stdout_f.read()
-            stderr_bytes = stderr_f.read()
+            stdout = _decode(stdout_f.read())
+            stderr = _decode(stderr_f.read())
 
-            stdout = _decode(stdout_bytes)
-            stderr = _decode(stderr_bytes)
-
-            return self._format(ret, stdout, stderr)
+            return ToolResult(content=self._format(ret, stdout, stderr))
 
         except Exception as exc:
-            return f"Error: {exc}"
+            return ToolResult(content=f"Error: {exc}", is_error=True)
         finally:
             stdout_f.close()
             stderr_f.close()
             _unlink(stdout_f.name)
             _unlink(stderr_f.name)
 
+    def _run_background(self, command: str) -> ToolResult:
+        """Start a command in the background, return immediately.
+
+        Matches claude-code's run_in_background / LocalShellTask pattern.
+        The process keeps running; the model is told it's backgrounded.
+        """
+        try:
+            env = os.environ.copy()
+            env["PATH"] = self._venv_bin + os.pathsep + env.get("PATH", "")
+            env["VIRTUAL_ENV"] = str(Path(sys.executable).parent.parent)
+
+            proc = subprocess.Popen(
+                command,
+                shell=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                cwd=str(self._ws),
+                env=env,
+            )
+            return ToolResult(content=(
+                f"Started in background. PID: {proc.pid}\n"
+                f"Command: {command[:200]!r}\n"
+                f"The process is running. Do NOT kill it. "
+                f"Use the running server — it's already listening."
+            ))
+        except Exception as exc:
+            return ToolResult(content=f"Error starting background process: {exc}", is_error=True)
+
     # ------------------------------------------------------------------
     # Output formatting
     # ------------------------------------------------------------------
 
-    def _format(
-        self,
-        returncode: int,
-        stdout: str,
-        stderr: str,
-    ) -> str:
-        lines: list[str] = [f"exit_code: {returncode}"]
+    def _format(self, returncode: int, stdout: str, stderr: str) -> str:
+        lines: list[str] = []
+        # Command semantics — interpret exit codes so the model doesn't
+        # mistake "no matches" or "files differ" for errors (claude-code pattern)
+        hint = self._interpret_exit_code(returncode, stdout, stderr)
+        if hint:
+            lines.append(f"exit_code: {returncode}  ({hint})")
+        else:
+            lines.append(f"exit_code: {returncode}")
 
         s_out = stdout.rstrip()
         if s_out:
@@ -155,6 +235,27 @@ class RunShell(Tool):
             )
 
         return output
+
+    @staticmethod
+    def _interpret_exit_code(exit_code: int, stdout: str, stderr: str) -> str | None:
+        """Interpret exit code semantics — matches claude-code commandSemantics.ts.
+
+        Returns a hint string for non-failure exit codes, helping the model
+        avoid retrying commands that didn't actually fail.
+        """
+        # exit 0 is always success
+        if exit_code == 0:
+            return None
+        # exit 1 for grep/rg = no matches found (not an error)
+        # exit 1 for diff = files differ (not an error)
+        # exit 1 for test/[ = condition false (not an error)
+        if exit_code == 1:
+            return "this may be expected (grep 'no match', diff 'files differ', test 'false')"
+        if exit_code == 2:
+            return "error — fix the issue before retrying"
+        if exit_code >= 126:
+            return "fatal — cannot execute, do NOT retry the same command"
+        return f"unexpected exit code — analyze before retrying"
 
     # ------------------------------------------------------------------
     # Process cleanup

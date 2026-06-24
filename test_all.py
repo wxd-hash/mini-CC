@@ -4,6 +4,7 @@ Run:   .venv/Scripts/python test_all.py
 """
 
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -227,36 +228,36 @@ def test_registry():
 # ======================================================================
 def test_permission():
     print("\n[4] Permission system")
-    from src.security.permission import PermissionManager, Mode
+    from src.security.permission import PermissionChecker, Mode
 
-    pm = PermissionManager()
+    pm = PermissionChecker()
 
     # plan
     pm.mode = Mode.PLAN
-    assert pm.check("read_file", {"path": "x"})
-    assert pm.check("search_files", {"query": "x"})
-    assert pm.check("git_diff", {"path": "."})
-    assert not pm.check("write_file", {"path": "x"})
-    assert not pm.check("run_shell", {"command": "ls"})
+    assert pm.check("read_file", {"path": "x"}) == "allow"
+    assert pm.check("search_files", {"query": "x"}) == "allow"
+    assert pm.check("git_diff", {"path": "."}) == "allow"
+    assert pm.check("write_file", {"path": "x"}) == "deny"
+    assert pm.check("run_shell", {"command": "ls"}) == "deny"
     ok("plan mode: read/search/git OK, write/shell denied")
 
     # ask (read-only tests; prompt requires interactive)
     pm.mode = Mode.ASK
-    assert pm.check("read_file", {"path": "x"})
-    assert pm.check("list_files", {"path": "."})
+    assert pm.check("read_file", {"path": "x"}) == "allow"
+    assert pm.check("list_files", {"path": "."}) == "allow"
     ok("ask mode: read tools auto-allowed")
 
     # auto
     pm.mode = Mode.AUTO
-    assert pm.check("write_file", {"path": "x"})
-    assert pm.check("run_shell", {"command": "ls"})
+    assert pm.check("write_file", {"path": "x"}) == "allow"
+    assert pm.check("run_shell", {"command": "ls"}) == "allow"
     ok("auto mode: write + low-risk shell auto-allowed")
 
     # high-risk detection
-    assert PermissionManager._is_high_risk("rm -rf /")
-    assert PermissionManager._is_high_risk("git push origin main")
-    assert not PermissionManager._is_high_risk("git status")
-    assert not PermissionManager._is_high_risk("echo hello")
+    assert PermissionChecker._is_high_risk("rm -rf /")
+    assert PermissionChecker._is_high_risk("git push origin main")
+    assert not PermissionChecker._is_high_risk("git status")
+    assert not PermissionChecker._is_high_risk("echo hello")
     ok("high-risk command detection correct")
 
 
@@ -359,26 +360,38 @@ def test_context():
 # ======================================================================
 def test_agent():
     print("\n[8] Agent instantiation (no API call)")
-    from src.agent.loop import MiniClaudeAgent
+    from src.agent.loop import Engine
     from src.llm.anthropic_provider import AnthropicProvider
     from src.tools.registry import ToolRegistry
     from src.tools.file_tools import ReadFile
-    from src.security.permission import PermissionManager
+    from src.security.permission import PermissionChecker
     from src.session.logger import SessionLogger
+    from src.context import build_system_prompt
 
     with tempfile.TemporaryDirectory() as tmp:
         ws = Path(tmp)
         reg = ToolRegistry()
         reg.register(ReadFile(ws))
-        perm = PermissionManager()
+        perm = PermissionChecker()
         log = SessionLogger(Path(tmp) / "test.jsonl")
         provider = AnthropicProvider(model="claude-sonnet-4-5")
+        prompt = build_system_prompt(cwd=str(ws))
 
-        agent = MiniClaudeAgent(reg, perm, log, ws, provider)
+        tools = [ReadFile(ws)]
+        agent = Engine(
+            tools=tools,
+            system_prompt=prompt,
+            permission_checker=perm,
+            provider=provider,
+            model="claude-sonnet-4-5",
+            tool_registry=reg,
+            workspace_dir=ws,
+            logger=log,
+        )
         assert agent is not None
 
         log.close()
-    ok("MiniClaudeAgent instantiated with AnthropicProvider")
+    ok("Engine instantiated with AnthropicProvider")
 
 
 # ======================================================================
@@ -390,21 +403,37 @@ def _make_agent(
     responses: list[LLMResponse | Exception | str] | None = None,
     mode: str = "auto",
 ):
-    """Create a MiniClaudeAgent wired to MockProvider + single tool."""
+    """Create an Engine wired to MockProvider + single tool."""
     from src.tools.registry import ToolRegistry
     from src.tools.file_tools import ReadFile, WriteFile
-    from src.security.permission import PermissionManager, Mode
+    from src.security.permission import PermissionChecker, Mode
     from src.session.logger import SessionLogger
-    from src.agent.loop import MiniClaudeAgent
+    from src.agent.loop import Engine
+    from src.context import build_system_prompt
 
     reg = ToolRegistry()
     reg.register(ReadFile(ws))
     reg.register(WriteFile(ws))
 
+    tools = [ReadFile(ws), WriteFile(ws)]
+
     provider = MockProvider(responses=responses)
-    perm = PermissionManager(Mode(mode))
-    log = SessionLogger(ws / "test.jsonl")
-    agent = MiniClaudeAgent(reg, perm, log, ws, provider)
+    perm = PermissionChecker()
+    perm.mode = Mode(mode)
+    # Create log OUTSIDE tempdir to avoid Windows file-lock cleanup issues
+    log = SessionLogger(Path(tempfile.gettempdir()) / f"test_{os.urandom(4).hex()}.jsonl")
+    prompt = build_system_prompt(cwd=str(ws))
+
+    agent = Engine(
+        tools=tools,
+        system_prompt=prompt,
+        permission_checker=perm,
+        provider=provider,
+        model="claude-sonnet-4-5",
+        tool_registry=reg,
+        workspace_dir=ws,
+        logger=log,
+    )
     return agent, provider, log
 
 
@@ -530,39 +559,41 @@ def test_agent_all_tools_denied():
 
 
 def test_agent_max_rounds():
-    """Agent stops after MAX_TOOL_ROUNDS and asks for final summary."""
+    """Agent warns at MAX_TOOL_ROUNDS and force-stops at 5x."""
     print("\n[9f] Agent loop: max rounds exceeded")
 
-    from src.config import MAX_TOOL_ROUNDS
+    import src.config as cfg
+    saved = cfg.MAX_TOOL_ROUNDS
+    cfg.MAX_TOOL_ROUNDS = 5  # Lower for test: warn at 5, force-stop at 25
 
-    with tempfile.TemporaryDirectory() as tmp:
-        ws = Path(tmp)
-        (ws / "loop.txt").write_text("data", encoding="utf-8")
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            (ws / "loop.txt").write_text("data", encoding="utf-8")
 
-        # Create responses that keep returning a tool call for every round
-        tool_response = LLMResponse(
-            text="still working...",
-            tool_calls=[
-                ToolCall(id="tc1", name="read_file", arguments={"path": "loop.txt"}),
-            ],
-            assistant_message={"role": "assistant", "content": "still working..."},
-        )
-        # Enough to exhaust all rounds + 1 for the final text response
-        responses: list = [tool_response] * MAX_TOOL_ROUNDS
-        responses.append("final answer after max rounds")
+            # Create responses for 25 rounds (5x the warning threshold) + 1 final
+            tool_response = LLMResponse(
+                text="still working...",
+                tool_calls=[
+                    ToolCall(id="tc1", name="read_file", arguments={"path": "loop.txt"}),
+                ],
+                assistant_message={"role": "assistant", "content": "still working..."},
+            )
+            responses: list = [tool_response] * 25
+            responses.append("final answer after max rounds")
 
-        agent, provider, log = _make_agent(ws, responses=responses)
+            agent, provider, log = _make_agent(ws, responses=responses)
 
-        result = agent.run("keep reading")
+            result = agent.run("keep reading")
 
-        assert result == "final answer after max rounds"
-        # MAX_TOOL_ROUNDS tool calls + 1 final summary call
-        assert provider._call_count == MAX_TOOL_ROUNDS + 1
-        # Final call should have tools=[] (no tools allowed)
-        assert provider.last_tools == []
+            assert result == "final answer after max rounds"
+            # 25 tool calls + 1 final call = 26
+            assert provider._call_count == 26
 
-        log.close()
-    ok(f"agent stops after {MAX_TOOL_ROUNDS} tool rounds, finalizes without tools")
+            log.close()
+    finally:
+        cfg.MAX_TOOL_ROUNDS = saved
+    ok("agent warns at MAX_TOOL_ROUNDS, force-stops at 5x")
 
 
 def test_agent_interleaved_text():
@@ -613,6 +644,7 @@ def test_agent_messages_accumulate():
         assert len(agent._messages) == 4  # accumulated
 
         log.close()
+        import gc; gc.collect()
     ok("messages accumulate across turns")
 
 
@@ -620,10 +652,11 @@ def test_agent_dont_ask_again_per_turn():
     """'Don't ask again' resets between turns — each new user message re-prompts."""
     print("\n[9i] Agent loop: 'don't ask again' per-turn reset")
 
-    from src.security.permission import PermissionManager, Mode
+    from src.security.permission import PermissionChecker, Mode
 
     # Unit test: reset_for_turn clears _always_allow
-    pm = PermissionManager(Mode.ASK)
+    pm = PermissionChecker()
+    pm.mode = Mode.ASK
     pm._always_allow.add("write_file")
     pm._always_allow.add("run_shell")
     assert len(pm._always_allow) == 2
