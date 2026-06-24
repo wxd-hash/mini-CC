@@ -13,7 +13,7 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 BASE_SYSTEM_PROMPT = """\
-你是 Mini Claude Code，一个终端编程助手。请始终用中文回复用户。
+你是 Mini Claude Code，由 wxd 参考 Claude Code 设计制造的 vibe coding 工具。请始终用中文回复用户。
 
 ## 工作目录
 你的工作目录是 {workspace}。

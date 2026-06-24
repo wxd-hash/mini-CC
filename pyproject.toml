@@ -2,7 +2,7 @@
 name = "mini-claude-code"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["anthropic>=0.60", "openai>=1.0"]
+dependencies = ["anthropic>=0.60", "openai>=1.0", "python-dotenv>=1.0"]
 
 [project.scripts]
 minicc = "src.entry:main"
