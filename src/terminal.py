@@ -218,10 +218,17 @@ def select_menu(options: list[str]) -> int:
 
     def _render() -> None:
         for i, opt in enumerate(options):
+            # Clear to end of line before writing (prevents stale text from
+            # longer previous options from showing after re-render)
             if i == selected:
-                print(f"    {_BRIGHT}{_GREEN}▸ {opt}{_RESET}   ")
+                sys.stdout.write(
+                    f"\033[K    {_BRIGHT}{_GREEN}▸ {opt}{_RESET}   \n"
+                )
             else:
-                print(f"    {_DIM}  {opt}{_RESET}   ")
+                sys.stdout.write(
+                    f"\033[K    {_DIM}  {opt}{_RESET}   \n"
+                )
+        sys.stdout.flush()
 
     # Drain leftover stdin + reset UTF-8 buffer
     global _utf8_buf
