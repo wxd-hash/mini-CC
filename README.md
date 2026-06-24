@@ -43,17 +43,30 @@ minicc "帮我创建 hello.py"
 
 ### 方式二：Docker（无需 Python）
 
-需要安装 [Docker Desktop](https://www.docker.com/products/docker-desktop/)。
-
 ```bash
-# 克隆并构建
+# 克隆并构建（只需一次）
 git clone https://github.com/wxd-hash/mini-CC.git
 cd mini-CC
 docker build -t minicc .
 
-# 运行
+# 设置 API key
+# Windows PowerShell（永久）：
+[Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "sk-你的key", "User")
+# macOS / Linux：
+export DEEPSEEK_API_KEY="sk-你的key"
+
+# 交互运行
 docker run -it --rm -v "$(pwd):/home/coder/workspace" -e DEEPSEEK_API_KEY minicc
+
+# 或一行命令
+docker run --rm -v "$(pwd):/home/coder/workspace" -e DEEPSEEK_API_KEY minicc "跑一下测试"
 ```
+
+> Docker 内置 git + ripgrep，非 root 运行。如果想在任何目录直接敲 `minicc`：
+>
+> **macOS / Linux：** `sudo cp docker-minicc.sh /usr/local/bin/minicc && sudo chmod +x /usr/local/bin/minicc`
+>
+> **Windows：** 将 `docker-minicc.ps1` 复制到 PATH 目录，在 `$PROFILE` 添加别名
 
 ## 环境变量
 
@@ -268,45 +281,6 @@ mini-claude-code/
 │   │   └── permission.py           # 权限检查（自杀防护 + 高危命令）
 │   └── session/
 │       └── logger.py               # SessionStore + SessionLogger
-```
-
-## Docker 运行
-
-内置 git + ripgrep，非 root 用户运行，所有操作在挂载的 workspace 内。
-
-```bash
-# 构建（只需一次）
-docker build -t minicc .
-
-# 交互模式
-docker run -it --rm \
-  -v "$(pwd):/home/coder/workspace" \
-  -e DEEPSEEK_API_KEY="sk-..." \
-  minicc
-
-# 一行命令
-docker run --rm \
-  -v "$(pwd):/home/coder/workspace" \
-  -e DEEPSEEK_API_KEY="sk-..." \
-  minicc "项目里有哪些测试文件？"
-```
-
-### 设为全局命令（推荐）
-
-安装包装脚本后，**任何目录**直接敲 `minicc`，和本地安装完全一样：
-
-**macOS / Linux:**
-```bash
-sudo cp docker-minicc.sh /usr/local/bin/minicc
-sudo chmod +x /usr/local/bin/minicc
-# 现在任何目录都可以直接 minicc
-```
-
-**Windows PowerShell:**
-```powershell
-cp docker-minicc.ps1 $PROFILE\..\docker-minicc.ps1
-# 在 $PROFILE 中添加:
-#   function minicc { & "$env:USERPROFILE\Documents\WindowsPowerShell\docker-minicc.ps1" @args }
 ```
 
 ## 快速测试
