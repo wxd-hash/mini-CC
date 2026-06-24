@@ -16,7 +16,7 @@
 - **会话持久化** — SessionStore 自动保存，按 workspace 组织，支持 --resume 恢复
 - **双 LLM 后端** — Anthropic Claude + DeepSeek（OpenAI 兼容协议）
 - **系统提示** — 全中文，内置 Shell 防循环规则
-- **KAIROS 记忆** — 跨会话持久记忆 + dream consolidation 自动合并
+- **KAIROS 记忆** — 子 Agent 自动提取 + 独立文件存储 + frontmatter + MEMORY.md 索引
 - **Skills 系统** — 内建 /review, /commit, /test, /simplify 技能
 - **Plan 模式** — 子 agent 探索代码库后再实施
 - **多源配置** — CLI 参数 > 环境变量 > TOML 文件
@@ -203,10 +203,22 @@ Select a session to resume:
 
 ## 项目记忆 (KAIROS)
 
-Agent 自动维护跨会话记忆，保存在 `~/.config/mini-claude/memory/`：
-- **daily_log.md** — AI 输出中的 `<memory>` 标签自动追加
-- **MEMORY.md** — 聚合记忆索引，加载到系统提示中
-- **Dream consolidation** — 每 24 小时或 5 个新会话后自动合并记忆
+参考 Claude Code 的 `extractMemories` 设计。每轮对话后自动启动后台**子 Agent**，审阅对话 transcript 并提取更新记忆。
+
+存储格式：每个记忆一个独立 `.md` 文件（带 YAML frontmatter），`MEMORY.md` 作为索引。
+
+```
+~/.config/mini-claude/memory/
+├── MEMORY.md              ← 索引，注入系统提示
+├── user_role.md           ← 用户角色/偏好
+├── feedback_testing.md    ← 用户反馈/规则
+├── project_xxx.md         ← 项目状态/截止日期
+└── reference_xxx.md       ← 外部资源引用
+```
+
+四种记忆类型：**user**（用户偏好）、**feedback**（反馈）、**project**（项目状态）、**reference**（外部资源）。
+
+主 agent 也可以直接调用 write_file/edit_file 写入记忆目录，系统检测到后会自动跳过子 agent 提取。
 
 ## 项目结构
 

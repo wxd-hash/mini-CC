@@ -22,10 +22,14 @@ BASE_SYSTEM_PROMPT = """\
 - 所有文件操作都在此目录内
 
 ## 项目记忆
-<project_memory> 包含跨会话的持久记忆：用户偏好、架构决策、常见陷阱。
-当你发现重要偏好/决策/陷阱时，用 write_file 更新记忆文件：
-  path = "{memory_path}"
-保留已有内容，追加新条目。文件不存在就创建。
+记忆系统帮你跨会话记住关键信息。每个记忆是独立文件，保存在 {memory_dir}。
+
+当你发现重要信息时，直接用 write_file / edit_file 写入记忆目录：
+- 每个记忆一个文件，用 frontmatter 格式（name、description、type）
+- 然后在 MEMORY.md 添加索引行
+- 记忆类型：user（用户偏好）、feedback（反馈）、project（项目状态）、reference（外部资源）
+
+MEMORY.md 会被注入到后续所有对话的系统提示中。
 
 ## Shell 命令规则（防无限循环）
 - 服务器/长运行命令：用 run_in_background=true，启动后立即返回。
@@ -112,14 +116,10 @@ def load_memory(memory_dir: Path | None = None) -> str:
     """Load MEMORY.md from the KAIROS memory directory."""
     if memory_dir is None:
         return ""
-    memory_path = memory_dir / "MEMORY.md"
-    if not memory_path.is_file():
+    from src.features.memory import load_memory_index
+    content = load_memory_index(memory_dir)
+    if not content:
         return ""
-    content = _read_text_safe(memory_path)
-    if content is None:
-        return ""
-    if len(content) > MEMORY_MAX_CHARS:
-        content = content[:MEMORY_MAX_CHARS] + "\n... [truncated]"
     return content
 
 
@@ -145,17 +145,17 @@ def build_system_prompt(
 
     # Memory path
     if memory_dir:
-        memory_path = str(memory_dir / "MEMORY.md")
+        mem_dir_str = str(memory_dir.resolve())
     elif sessions_dir:
         from src.session.logger import _workspace_dir_name
         ws_name = _workspace_dir_name(str(ws))
-        memory_path = str(sessions_dir / ws_name / "memory.md")
+        mem_dir_str = str(sessions_dir / ws_name)
     else:
-        memory_path = "(sessions dir not configured)"
+        mem_dir_str = "(not configured)"
 
     base = BASE_SYSTEM_PROMPT.format(
         workspace=str(ws),
-        memory_path=memory_path,
+        memory_dir=mem_dir_str,
     )
     parts = [base]
 

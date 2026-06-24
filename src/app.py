@@ -131,6 +131,8 @@ def run(args) -> None:
         tool_registry=registry,
         workspace_dir=workspace.root,
         logger=logger,
+        memory_dir=memory_dir,
+        provider_factory=lambda: _make_provider(args, app_config),
     )
 
     plan_manager.bind_engine(engine)

@@ -215,6 +215,8 @@ class Engine:
         tool_registry: Any = None,
         workspace_dir: Path | None = None,
         logger: SessionLogger | None = None,
+        memory_dir: Path | None = None,
+        provider_factory: Any = None,
     ) -> None:
         self._provider = provider
         self._model = model
@@ -227,6 +229,8 @@ class Engine:
         self._tool_registry = tool_registry
         self._workspace_dir = workspace_dir
         self._logger = logger
+        self._memory_dir = memory_dir
+        self._provider_factory = provider_factory
 
         # Internal state
         self._messages: list[dict[str, Any]] = []
@@ -343,14 +347,37 @@ class Engine:
             elif ev_type == "error":
                 print(term.error(event[1]))
             elif ev_type == "tool_executing":
-                # Show running indicator (matches claude-code spinner)
                 _, name, params, activity = event
                 print(term.tool_running(name, self._fmt_params(params), activity or ""))
             elif ev_type == "waiting":
                 pass
+
         if has_output and last_text:
             print()
+
+        # ── Post-turn: run memory extraction sub-agent ──
+        # Matches claude-code's extractMemories hook in stopHooks.ts
+        # Runs in background thread, non-blocking
+        self._extract_memories()
+
         return last_text if last_text else None
+
+    def _extract_memories(self) -> None:
+        """Run memory extraction sub-agent in background (matches claude-code)."""
+        try:
+            from src.features.memory import run_memory_extraction
+            mem_dir = getattr(self, '_memory_dir', None)
+            if mem_dir is None:
+                return
+            run_memory_extraction(
+                engine=self,
+                memory_dir=mem_dir,
+                messages=self._messages,
+                provider_factory=getattr(self, '_provider_factory', None),
+                model=self._model,
+            )
+        except Exception:
+            pass  # Non-essential — don't break the REPL
 
     def resume(self, history: list[dict[str, Any]]) -> None:
         for msg in history:
