@@ -277,7 +277,39 @@ def compact_messages(
         return recent
 
     summary_msg = provider.make_compaction_summary_message(summary)
-    return [summary_msg] + recent
+    result = [summary_msg] + recent
+    # Clean orphaned tool messages at compact boundary
+    # (matches claude-code: only runs at compaction, not every API call)
+    result = _clean_compact_boundary(result)
+    return result
+
+
+def _clean_compact_boundary(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Strip orphaned tool messages at compact boundary (OpenAI/DeepSeek).
+
+    After compaction, the summary_msg separates old and new messages.
+    Any tool messages after the summary that reference tool_calls from
+    the old (summarized) section are orphans and must be removed.
+
+    This runs ONLY at compaction time, matching claude-code's
+    buildPostCompactMessages pattern.
+    """
+    last_ids: set[str] = set()
+    clean: list[dict[str, Any]] = []
+    for m in messages:
+        role = m.get("role", "")
+        if role == "assistant" and m.get("tool_calls"):
+            last_ids = {tc["id"] if isinstance(tc, dict) else tc.id
+                        for tc in m["tool_calls"]}
+            clean.append(m)
+        elif role == "tool":
+            tid = m.get("tool_call_id", "")
+            if tid in last_ids:
+                clean.append(m)
+        else:
+            last_ids = set()
+            clean.append(m)
+    return clean
 
 
 def _messages_to_text(messages: list[dict[str, Any]]) -> str:

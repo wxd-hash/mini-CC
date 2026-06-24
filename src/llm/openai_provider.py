@@ -40,12 +40,9 @@ class OpenAIProvider(LLMProvider):
         tools: list[dict[str, Any]],
         max_tokens: int = 4096,
     ) -> LLMResponse:
-        # Validate: strip orphaned tool messages
-        clean = _validate_messages(messages)
-
         full_messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},
-            *clean,
+            *messages,
         ]
 
         response = self._client.chat.completions.create(
