@@ -21,55 +21,77 @@
 - **Plan 模式** — 子 agent 探索代码库后再实施
 - **多源配置** — CLI 参数 > 环境变量 > TOML 文件
 
-## 安装
+## 快速开始
 
-```bash
+### 方式一：Docker（推荐，零依赖）
+
+需要先安装 [Docker Desktop](https://www.docker.com/products/docker-desktop/)。
+
+```powershell
+# 1. 克隆项目
 git clone https://github.com/wxd-hash/mini-CC.git
 cd mini-CC
+
+# 2. 构建镜像（只需一次）
+docker build -t minicc .
+
+# 3. 设置 API key
+# PowerShell 永久保存：
+[Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "sk-你的key", "User")
+# 然后关闭 PowerShell 重新打开
+
+# 4. 运行
+docker run -it --rm -v "${pwd}:/home/coder/workspace" -e DEEPSEEK_API_KEY minicc
+```
+
+如果想在任何目录直接用 `minicc` 命令：
+
+```powershell
+# 把包装脚本复制到 PATH
+mkdir "$env:USERPROFILE\AppData\Local\minicc-bin" -Force
+cp docker-minicc.ps1 "$env:USERPROFILE\AppData\Local\minicc-bin\minicc.ps1"
+
+# 在 PowerShell 配置文件里加一行别名
+notepad $PROFILE
+# 添加:  function minicc { & "$env:USERPROFILE\AppData\Local\minicc-bin\minicc.ps1" @args }
+```
+
+### 方式二：本地 Python
+
+需要 [Python 3.12+](https://www.python.org/downloads/)。
+
+```powershell
+git clone https://github.com/wxd-hash/mini-CC.git
+cd mini-CC
+
+# 创建虚拟环境
 python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\pip install -e .
 
-# Windows
-.venv\Scripts\python.exe -m pip install -r requirements.txt
+# 设置 API key
+[Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "sk-你的key", "User")
 
-# macOS / Linux
-.venv/bin/pip install -r requirements.txt
+# 现在任何目录都可以直接敲 minicc
+minicc
 ```
-
-### 全局命令
-
-```bash
-.venv\Scripts\python.exe -m pip install -e .
-```
-
-之后可以在任何目录用 `minicc` 启动。
 
 ## 环境变量
 
 ```powershell
-# PowerShell
-$env:ANTHROPIC_API_KEY = "sk-ant-..."    # Claude
-$env:DEEPSEEK_API_KEY = "sk-..."          # DeepSeek
+# PowerShell（临时，当前窗口有效）
+$env:DEEPSEEK_API_KEY = "sk-..."
+
+# PowerShell（永久，所有窗口有效）
+[Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "sk-...", "User")
+
+# 如果要用 Claude
+$env:ANTHROPIC_API_KEY = "sk-ant-..."
 ```
 
 ```bash
 # Bash / Zsh
-export ANTHROPIC_API_KEY="sk-ant-..."
 export DEEPSEEK_API_KEY="sk-..."
-```
-
-### 配置文件（可选）
-
-支持 TOML 配置文件：`~/.config/mini-claude/config.toml` 或 `./.mini-claude.toml`
-
-```toml
-provider = "deepseek"
-model = "deepseek-chat"
-max_tokens = 8192
-max_rounds = 30
-
-[deepseek]
-api_key = "sk-..."
-base_url = "https://api.deepseek.com/v1"
 ```
 
 ## 使用
