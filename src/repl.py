@@ -89,9 +89,6 @@ def run_repl(
     if not workspace:
         workspace = str(Path.cwd())
 
-    # ── Double-press Ctrl+C tracking (matches claude-code useDoublePress) ──
-    last_ctrlc: float = 0.0
-
     first = True
     while True:
         if not first:
@@ -100,19 +97,9 @@ def run_repl(
         try:
             line = term.readline(_prompt())
         except (EOFError, KeyboardInterrupt):
-            # Ctrl+C at idle prompt → double-press to exit
-            now = time.monotonic()
-            if now - last_ctrlc <= _DOUBLE_PRESS_MS:
-                print()
-                break
-            last_ctrlc = now
             print()
-            print(term.info("Press Ctrl+C again to exit"))
-            continue
+            break
         print()
-
-        # Reset double-press timer on any normal input
-        last_ctrlc = 0.0
 
         stripped = line.strip()
         if not stripped:
@@ -150,15 +137,8 @@ def run_repl(
         try:
             engine.run(stripped)
         except (KeyboardInterrupt, AbortedError):
-            # Ctrl+C or Esc during engine execution → double-press to exit
-            now = time.monotonic()
-            if now - last_ctrlc <= _DOUBLE_PRESS_MS:
-                print()
-                print(term.info("Goodbye."))
-                break
-            last_ctrlc = now
             print()
-            print(term.info("Press Ctrl+C again to exit (turn cancelled)"))
+            print(term.info("Turn cancelled."))
             continue
         except Exception as e:
             print()
