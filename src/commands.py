@@ -170,23 +170,44 @@ def do_resume(
 
 
 def _print_history(messages: list[dict[str, Any]]) -> None:
+    """Print resumed session messages with terminal styling matching live display."""
     print(term.hr())
     for msg in messages:
         role = msg.get("role", "")
         content = msg.get("content", "")
         if role == "user":
             print(f"\n{term.prompt()}{content}")
-        elif isinstance(content, str) and (
-            content.startswith("[tool]") or content.startswith("[called")
-        ):
-            for line in content.split("\n"):
-                print(f"  {line}")
-        elif isinstance(content, str) and (
-            content.startswith("[permission_denied]") or content.startswith("[error]")
-        ):
-            print(term.error(content))
+        elif role == "assistant":
+            # Show tool calls with ↳ prefix, text normally
+            tc = msg.get("tool_calls")
+            if tc:
+                for call in tc:
+                    fn = call.get("function", call)
+                    name = fn.get("name", "?")
+                    args_str = fn.get("arguments", "{}")
+                    try:
+                        args = json.loads(args_str) if isinstance(args_str, str) else args_str
+                        params = ", ".join(f"{k}={str(v)[:40]!r}" for k, v in args.items())
+                    except Exception:
+                        params = str(args_str)[:80]
+                    print(f"  {term._DIM}↳ {term._CYAN}{name}{term._RESET}{term._DIM}({params}){term._RESET}")
+            if content:
+                print(f"\n{term.assistant_text(content)}")
+        elif role == "tool":
+            text = str(content) if content else ""
+            first_line = text.split("\n")[0][:200]
+            rest = text.split("\n")[1:]
+            is_err = "Error" in first_line or "Permission denied" in first_line
+            if is_err:
+                print(f"  {term._DIM}↳{term._RESET} {term._RED}✗{term._RESET} {term._RED}{first_line}{term._RESET}")
+            else:
+                print(f"  {term._DIM}↳{term._RESET} {term._GREEN}✓{term._RESET} {term._DIM}{first_line}{term._RESET}")
+            for line in rest[:3]:
+                if line.strip():
+                    print(f"    {term._DIM}{line[:120]}{term._RESET}")
         else:
-            print(f"\n{term.assistant_text(content)}")
+            text = str(content)[:200] if content else ""
+            print(f"  {term._DIM}{text}{term._RESET}")
     print(f"\n{term.hr()}")
 
 
