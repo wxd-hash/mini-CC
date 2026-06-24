@@ -5,4 +5,4 @@ requires-python = ">=3.14"
 dependencies = ["anthropic>=0.60", "openai>=1.0"]
 
 [project.scripts]
-minicc = "entry:main"
+minicc = "src.entry:main"

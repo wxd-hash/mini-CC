@@ -273,6 +273,25 @@ mini-claude-code/
 │       └── logger.py               # SessionStore + SessionLogger
 ```
 
+## Docker 运行
+
+```bash
+# 构建镜像
+docker build -t minicc .
+
+# 交互模式（挂载当前目录为工作区）
+docker run -it --rm \
+  -v "$(pwd):/home/coder/workspace" \
+  -e DEEPSEEK_API_KEY="sk-..." \
+  minicc
+
+# 或使用 docker-compose
+echo 'DEEPSEEK_API_KEY=sk-...' > .env
+docker compose run --rm minicc
+```
+
+Docker 中已内置 git + ripgrep，所有文件操作在挂载的 workspace 目录内。
+
 ## 快速测试
 
 ```bash

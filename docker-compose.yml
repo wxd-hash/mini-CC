@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  minicc:
+    build: .
+    image: minicc:latest
+    container_name: minicc
+    stdin_open: true    # -i 交互
+    tty: true           # -t TTY
+    environment:
+      # 下面这两个选一个填
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      # 可选：覆盖默认配置
+      - MINICLAUDE_PROVIDER=${MINICLAUDE_PROVIDER:-deepseek}
+      - MINICLAUDE_MODEL=${MINICLAUDE_MODEL:-}
+      - OPENAI_API_KEY=${DEEPSEEK_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.deepseek.com/v1}
+    volumes:
+      # 工作目录：把你想让 minicc 操作的代码放这里
+      - .:/home/coder/workspace
+      # 持久记忆：跨容器保留
+      - minicc-memory:/home/coder/.config/mini-claude/memory
+      # 会话记录：跨容器保留
+      - minicc-sessions:/home/coder/.config/mini-claude/sessions
+    command: ${EXTRA_ARGS:-}
+
+volumes:
+  minicc-memory:
+  minicc-sessions:

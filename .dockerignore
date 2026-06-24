@@ -1,0 +1,15 @@
+.venv
+.git
+__pycache__
+*.pyc
+.sessions
+.pytest_cache
+.mypy_cache
+*.egg-info
+dist
+build
+fig
+workspace
+test_all.py
+GUIDE.md
+README.md
