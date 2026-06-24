@@ -6,11 +6,15 @@ Enhanced with cc-mini features: auto-compact, skill commands, history listing.
 from __future__ import annotations
 
 import sys
+import time
 from pathlib import Path
 
 from src import terminal as term
 from src.agent.loop import AbortedError
 from src.security.permission import PermissionChecker
+
+# Matches claude-code useDoublePress DOUBLE_PRESS_TIMEOUT_MS = 800
+_DOUBLE_PRESS_MS = 0.8
 from src.tools.registry import ToolRegistry
 
 
@@ -85,6 +89,9 @@ def run_repl(
     if not workspace:
         workspace = str(Path.cwd())
 
+    # ── Double-press Ctrl+C tracking (matches claude-code useDoublePress) ──
+    last_ctrlc: float = 0.0
+
     first = True
     while True:
         if not first:
@@ -93,9 +100,19 @@ def run_repl(
         try:
             line = term.readline(_prompt())
         except (EOFError, KeyboardInterrupt):
+            # Ctrl+C at idle prompt → double-press to exit
+            now = time.monotonic()
+            if now - last_ctrlc <= _DOUBLE_PRESS_MS:
+                print()
+                break
+            last_ctrlc = now
             print()
-            break
+            print(term.info("Press Ctrl+C again to exit"))
+            continue
         print()
+
+        # Reset double-press timer on any normal input
+        last_ctrlc = 0.0
 
         stripped = line.strip()
         if not stripped:
@@ -129,21 +146,25 @@ def run_repl(
             print(term.info(f"Unknown command: /{cmd_name}. Type /help or see available commands."))
             continue
 
-        # Normal query → submit to engine (NEVER exit on error)
+        # Normal query → submit to engine
         try:
             engine.run(stripped)
         except (KeyboardInterrupt, AbortedError):
-            # Ctrl+C or Esc — cancel current turn, return to prompt
+            # Ctrl+C or Esc during engine execution → double-press to exit
+            now = time.monotonic()
+            if now - last_ctrlc <= _DOUBLE_PRESS_MS:
+                print()
+                print(term.info("Goodbye."))
+                break
+            last_ctrlc = now
             print()
-            print(term.info("Turn cancelled."))
+            print(term.info("Press Ctrl+C again to exit (turn cancelled)"))
             continue
         except Exception as e:
-            # Catch ALL errors — the REPL must NEVER die
             print()
             print(term.error(f"Engine error (recovered): {e}"))
             print(term.info("The agent is still alive. You can continue."))
             continue
 
-    # Clean up the input box on exit (only reached via /exit, /quit, or Ctrl+C twice)
     print("\033[2K\033[1A\033[2K\033[1A\033[2K", end="")
     sys.stdout.flush()
