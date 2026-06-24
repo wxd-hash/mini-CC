@@ -43,6 +43,58 @@ class CommandContext:
 
 
 # ---------------------------------------------------------------------------
+# Session picker helpers
+# ---------------------------------------------------------------------------
+
+def _relative_time(ts_str: str) -> str:
+    """Convert timestamp like '06-24 14:30' to relative time (matching claude-code)."""
+    if not ts_str:
+        return ""
+    try:
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        parts = ts_str.split()
+        date_part = parts[0]
+        time_part = parts[1] if len(parts) > 1 else "00:00"
+        month, day = map(int, date_part.split("-"))
+        hour, minute = map(int, time_part.split(":"))
+        dt = datetime(now.year, month, day, hour, minute)
+        if dt > now:
+            dt = dt.replace(year=now.year - 1)
+        delta = now - dt
+        if delta < timedelta(hours=1):
+            mins = max(1, int(delta.total_seconds() / 60))
+            return f"{mins}m ago"
+        elif delta < timedelta(hours=24):
+            return f"{int(delta.total_seconds() / 3600)}h ago"
+        elif delta < timedelta(days=7):
+            return f"{delta.days}d ago"
+        else:
+            return ts_str
+    except Exception:
+        return ts_str
+
+
+def _print_session_picker(sessions: list) -> None:
+    """Print a numbered session list (matches claude-code's resume picker)."""
+    try:
+        import shutil
+        width = min(shutil.get_terminal_size().columns, 120) - 8
+    except Exception:
+        width = 80
+
+    print()
+    print(term.bold("Recent sessions:"))
+    print(term.hr_fixed(width))
+    for i, (path, name, ts) in enumerate(sessions, 1):
+        rel = _relative_time(ts)
+        display = name[:width - 25] if len(name) > width - 25 else name
+        print(f"  {term._GREEN}{i:>2}{term._RESET}. {display:<{width - 22}} {term._DIM}{rel}{term._RESET}")
+    print(term.hr_fixed(width))
+    print(f"  {term._DIM}Enter = start fresh,  1-{len(sessions)} = resume,  q = cancel{term._RESET}")
+
+
+# ---------------------------------------------------------------------------
 # Resume
 # ---------------------------------------------------------------------------
 
@@ -65,16 +117,36 @@ def do_resume(
             print()
             return
 
-        print(term.bold("Select a session to resume:"))
-        print(term.hr())
-        options = [f"{name:<50} {ts}" for _, name, ts in sessions]
-        options.append("(start fresh)")
-        idx = term.select_menu(options)
-        if idx < 0 or idx == len(sessions):
+        _print_session_picker(sessions)
+        try:
+            choice = input(f"\n  {term._BOLD_GREEN}Resume [1-{len(sessions)}] or Enter for fresh >{term._RESET} ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+
+        if not choice or choice.lower() in ("q", "n", "fresh"):
             print(term.info("Starting fresh."))
             print()
             return
-        session_path = sessions[idx][0]
+
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(sessions):
+                session_path = sessions[idx][0]
+            else:
+                print(term.error(f"Invalid number: {choice}"))
+                print()
+                return
+        except ValueError:
+            # Try matching by session ID prefix
+            needle = choice.lower()
+            matches = [s for s in sessions if s[2].lower().startswith(needle)]
+            if matches:
+                session_path = matches[0][0]
+            else:
+                print(term.error(f"Session not found: {choice}"))
+                print()
+                return
     else:
         session_path = Path(resume_arg)
         if not session_path.is_file():
