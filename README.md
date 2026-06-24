@@ -2,26 +2,26 @@
 
 ![mini cc--meow~](fig/a7c1b575-9457-46d5-a1f8-e8b1d8f77abc.png)
 
-A minimal CLI coding agent powered by Claude or DeepSeek. Built in Python with zero framework dependencies. Talk to your codebase in natural language — the agent reads, writes, searches, runs shell commands, and fixes bugs autonomously.
+基于 Claude Code 架构的轻量级终端编程助手。纯 Python 实现，零框架依赖。用自然语言和代码库对话——agent 会自主读取、写入、搜索、运行 shell 命令并修复 bug。
 
-## Features
+## 核心特性
 
-- **Streaming output** — responses appear character-by-character in real time, no waiting for full generation
-- **Agent Loop** — user input → LLM → tool calls → loop → final answer (20 rounds by default, configurable via `--max-rounds`)
-- **Loop detection** — 3-level progressive intervention: same-tool-same-args detection, consecutive error fuse, stale-read content hashing; warns → forces reflection → hard-aborts only as last resort
-- **6 tools** — read_file, write_file, list_files, search_files, git_diff, run_shell
-- **Dual LLM backend** — Anthropic Claude + DeepSeek (OpenAI-compatible) via clean provider abstraction
-- **Permission system** — 3 modes (plan / ask / auto) with interactive keyboard menu and high-risk command detection
-- **Workspace sandbox** — all file I/O restricted to a workspace directory with path-escape protection
-- **JSONL session logging** — append-only, 7 event types, auto-cleanup of empty sessions
-- **Session resume** — organized by workspace, interactive picker with session names and timestamps
-- **Context compaction** — two-tier: free micro-compact truncates old tool results, then LLM summarization reduces message count when >30
-- **Hierarchical CLAUDE.md** — walks from workspace up to filesystem root, collecting instructions at each level (workspace overrides parent)
-- **Project memory** — `memory.md` persists user preferences and decisions across sessions; LLM can read and update it via tools
-- **Prompt caching** — system prompt built once per turn, rebuilt after compaction or `/reload`
-- **Styled terminal UI** — colored prompts, mode indicator, horizontal rules, ASCII cat banner, `--no-color` for CI
+- **Agent 工具循环** — while True 状态机模式，无硬性轮次上限
+- **并行工具执行** — 只读工具（read/search/list）ThreadPoolExecutor 并行批处理，写入工具串行
+- **自动压缩** — token 阈值触发（非消息数），circuit breaker 防重复压缩
+- **重试机制** — 指数退避 + jitter，最多 10 次重试，自动处理限流/超时/上下文溢出
+- **7 个工具** — read_file, write_file, edit_file, list_files, search_files, git_diff, run_shell
+- **流式输出** — 实时逐字显示，不用等完整生成
+- **双层权限系统** — 自杀防护（taskkill /IM python 永不允许）+ 高危命令检测 + 键盘菜单确认
+- **会话持久化** — SessionStore 自动保存，按 workspace 组织，支持 --resume 恢复
+- **双 LLM 后端** — Anthropic Claude + DeepSeek（OpenAI 兼容协议）
+- **系统提示** — 全中文，内置 Shell 防循环规则
+- **KAIROS 记忆** — 跨会话持久记忆 + dream consolidation 自动合并
+- **Skills 系统** — 内建 /review, /commit, /test, /simplify 技能
+- **Plan 模式** — 子 agent 探索代码库后再实施
+- **多源配置** — CLI 参数 > 环境变量 > TOML 文件
 
-## Installation
+## 安装
 
 ```bash
 git clone https://github.com/wxd-hash/mini-CC.git
@@ -35,17 +35,15 @@ python -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-### Global command (optional)
+### 全局命令
 
 ```bash
 .venv\Scripts\python.exe -m pip install -e .
 ```
 
-Then use `minicc` from any directory — the current working directory becomes the workspace.
+之后可以在任何目录用 `minicc` 启动。
 
-## Environment
-
-Set your API key before launching:
+## 环境变量
 
 ```powershell
 # PowerShell
@@ -59,92 +57,140 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 export DEEPSEEK_API_KEY="sk-..."
 ```
 
-## Usage
+### 配置文件（可选）
 
-```bash
-# Default (DeepSeek, ask mode) — cd into your project first
-minicc
+支持 TOML 配置文件：`~/.config/mini-claude/config.toml` 或 `./.mini-claude.toml`
 
-# Use Anthropic instead
-minicc --provider anthropic
+```toml
+provider = "deepseek"
+model = "deepseek-chat"
+max_tokens = 8192
+max_rounds = 30
 
-# Point to a different directory
-minicc --workspace E:\my_project
-
-# CI / pipe-friendly (no ANSI colors)
-minicc --no-color
+[deepseek]
+api_key = "sk-..."
+base_url = "https://api.deepseek.com/v1"
 ```
 
-### CLI options
+## 使用
 
-| Flag | Default | Description |
-|---|---|---|
-| `--provider anthropic\|deepseek` | `deepseek` | LLM provider |
-| `--model MODEL` | provider default | Override model name |
-| `--api-key KEY` | env var | API key |
-| `--api-base URL` | DeepSeek official | API base URL (DeepSeek only) |
-| `--workspace PATH` | `.` (cwd) | Workspace root directory |
-| `--log-dir PATH` | `./.sessions` | Session log directory |
-| `--mode plan\|ask\|auto` | `ask` | Permission mode |
-| `--max-rounds N` | `20` | Max tool-call rounds per user turn |
-| `--resume` | — | Show session picker for this workspace |
-| `--no-color` | — | Disable ANSI color output |
+```bash
+# 默认 DeepSeek，ask 模式
+minicc
 
-### Slash commands
+# 用 Anthropic
+minicc --provider anthropic --model sonnet
 
-| Command | Description |
-|---|---|
-| `/exit` | Quit and clean up |
-| `/tools` | List all registered tools |
-| `/tool <name> <json>` | Manual tool call (bypasses LLM) |
-| `/perm <plan\|ask\|auto\|status>` | Switch or view permission mode |
-| `/clear` | Reset conversation history |
-| `/reload` | Force-refresh CLAUDE.md and project memory |
+# 指定工作目录
+minicc --workspace E:\my_project
 
-## Permission modes
+# CI / 管道模式
+minicc --no-color
 
-| Mode | read / list / search / git_diff | write_file | run_shell |
-|---|---|---|---|
-| **plan** | auto-allow | denied | denied |
-| **ask** | auto-allow | interactive menu | interactive menu |
-| **auto** | auto-allow | auto-allow | low-risk auto / high-risk menu |
+# 一行命令（非交互）
+minicc "项目里有哪些测试文件？"
 
-The permission menu supports keyboard navigation: `↑↓` / `ws` / `jk` to move, `Enter` to confirm, `Esc` to cancel. Three options per prompt: **Yes**, **Yes, and don't ask again**, **No**.
+# 恢复之前的会话
+minicc --resume
 
-High-risk shell commands: `rm`, `sudo`, `curl`, `wget`, `ssh`, `scp`, `chmod`, `chown`, `git push`, `pip install`, `npm install`.
+# 自动允许模式（跳过权限确认）
+minicc --mode auto
+```
 
-"Don't ask again" auto-allows the tool for the rest of the **current turn** (one user message + its tool chain). Permission resets at the start of each new user input.
+### CLI 选项
 
-## Tools
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--provider anthropic\|deepseek` | `deepseek` | LLM 提供商 |
+| `--model MODEL` | 默认模型 | 模型名（支持别名：sonnet, opus, haiku） |
+| `--api-key KEY` | 环境变量 | API 密钥 |
+| `--api-base URL` | 自动 | API 地址 |
+| `--workspace PATH` | 当前目录 | 工作目录 |
+| `--log-dir PATH` | `./.sessions` | 会话日志目录 |
+| `--mode plan\|ask\|auto` | `ask` | 权限模式 |
+| `--max-tokens N` | 模型默认 | 每次响应的最大 token 数 |
+| `--resume` | — | 显示会话恢复列表 |
+| `--no-color` | — | 关闭 ANSI 颜色 |
+| `--config PATH` | — | 指定 TOML 配置文件 |
+| `--memory-dir PATH` | `~/.config/mini-claude/memory` | 记忆目录 |
 
-| Tool | Input | Behavior |
-|---|---|---|
-| `read_file` | `path` | UTF-8 read, max 12000 chars with truncation notice |
-| `write_file` | `path`, `content` | Creates parent dirs, returns absolute path and char count |
-| `list_files` | `path` (optional, default `.`) | Up to 200 entries with file sizes, ignores `.git`/`__pycache__`/`node_modules`/`.venv` |
-| `search_files` | `query`, `path` (optional) | Tries ripgrep first for speed, falls back to pure Python; skips binary, max 100 matches |
-| `git_diff` | `path` (optional), `staged` (optional) | Read-only, supports `--staged` flag, friendly message if not a git repo |
-| `run_shell` | `command` | 30s timeout, GBK/UTF-8 auto-detection, venv PATH injected |
+### 斜杠命令
 
-## Sessions & resume
+| 命令 | 说明 |
+|------|------|
+| `/exit` | 退出 |
+| `/tools` | 列出所有工具 |
+| `/tool <name> <json>` | 手动调用工具 |
+| `/perm <plan\|ask\|auto\|status>` | 切换/查看权限模式 |
+| `/clear` | 重置对话 |
+| `/reload` | 刷新系统提示 |
+| `/compact` | 手动压缩对话 |
+| `/history` | 查看历史会话 |
+| `/resume [编号]` | 恢复会话 |
+| `/skills` | 列出可用技能 |
+| `/review` | 代码审查 |
+| `/commit` | 创建 git commit |
+| `/test` | 运行测试 |
+| `/simplify` | 代码优化 |
 
-Sessions are stored in `.sessions/` organized by workspace:
+## 权限系统
+
+| 模式 | read/list/search/git | write_file/edit_file | run_shell |
+|------|---------------------|---------------------|-----------|
+| **plan** | 自动允许 | 拒绝 | 拒绝 |
+| **ask** | 自动允许 | 交互菜单 | 交互菜单 |
+| **auto** | 自动允许 | 自动允许 | 低风险自动 / 高风险菜单 |
+
+### 高危命令检测
+
+以下命令即使 auto 模式也要确认：`rm`, `del`, `taskkill`, `kill`, `killall`, `sudo`, `curl`, `wget`, `shutdown`, `docker rm/rmi`, `git reset --hard`, `pip install`, `npm install`
+
+### 自杀防护
+
+以下命令**在任何模式下永不允许**，不弹窗，直接拒绝：
+- `taskkill /IM python` — 会杀死 agent 自身
+- `killall python` / `pkill python`
+- `kill -9 -1`（杀全系统进程）
+- fork bomb
+
+## 工具
+
+| 工具 | 参数 | 说明 |
+|------|------|------|
+| `read_file` | `path` | 读取文件，最多 12000 字符 |
+| `write_file` | `path`, `content` | 写入/覆盖文件 |
+| `edit_file` | `path`, `old_string`, `new_string`, `replace_all?` | 精确字符串替换 |
+| `list_files` | `path` (可选，默认 `.`) | 列出目录，最多 200 条 |
+| `search_files` | `query`, `path` (可选) | 搜索文件内容，优先用 ripgrep |
+| `git_diff` | `path` (可选), `staged` (可选) | git 差异（只读） |
+| `run_shell` | `command`, `run_in_background?`, `timeout?` | 执行 shell 命令 |
+
+### run_shell 特性
+
+- 30 秒默认超时
+- **自动驾驶后台化**：服务器命令（uvicorn, flask run 等）自动后台运行，超时不会 kill
+- `run_in_background=true` — 命令在后台运行，立即返回 PID
+- 命令超过 15 秒自动转入后台（不杀进程）
+- Exit code 语义解释：exit 1 = 预期行为（grep 无匹配），exit 126+ = 致命错误不要重试
+
+## 会话与恢复
+
+会话存储在 `.sessions/` 下，按 workspace 组织：
 
 ```
 .sessions/
 ├── E_test_minicc/
 │   ├── session-20260615T103402Z.jsonl
+│   ├── session-20260615T103402Z.meta.json
 │   └── session-20260615T110000Z.jsonl
-└── E_mini_claude_code_workspace/
+└── E_mini_claude_code/
     └── session-20260615T100000Z.jsonl
 ```
 
-Each session is a JSONL file with 7 event types: `user_input`, `assistant_text`, `tool_use`, `tool_result`, `permission_denied`, `error`, `compact`.
-
-Resume shows an interactive picker with session name (first user message) and last activity time:
+恢复历史会话：
 
 ```bash
-python main.py --workspace E:\my_project --resume
+minicc --resume
 ```
 
 ```
@@ -155,90 +201,67 @@ Select a session to resume:
     (start fresh)
 ```
 
-The full conversation history is loaded and displayed in the terminal. Empty sessions (no user messages) are automatically deleted.
+## 项目记忆 (KAIROS)
 
-## CLAUDE.md (hierarchical)
+Agent 自动维护跨会话记忆，保存在 `~/.config/mini-claude/memory/`：
+- **daily_log.md** — AI 输出中的 `<memory>` 标签自动追加
+- **MEMORY.md** — 聚合记忆索引，加载到系统提示中
+- **Dream consolidation** — 每 24 小时或 5 个新会话后自动合并记忆
 
-CLAUDE.md files are discovered by walking from the workspace up to the filesystem root. Three variants are checked at each directory level:
-
-- `CLAUDE.md`
-- `.claude/CLAUDE.md`
-- `CLAUDE.local.md`
-
-Instructions from parent directories load first, workspace-level last — so project rules can override global defaults. Edits take effect after `/reload` or at the start of the next turn.
-
-```markdown
-# E:\projects\CLAUDE.md (all projects)
-- Use pytest for testing
-- Keep code simple
-```
-
-```markdown
-# E:\projects\my-app\CLAUDE.md (this project only)
-- Database is SQLite, not PostgreSQL
-```
-
-## Project memory
-
-The LLM automatically maintains a `memory.md` file in the sessions directory (e.g. `.sessions/E_my_project/memory.md`) to persist preferences, decisions, and gotchas across sessions. The exact path is provided in the system prompt so the LLM knows where to write.
-
-No setup required — the system prompt instructs the LLM to read and update the memory file as needed.
-
-## Project structure
+## 项目结构
 
 ```
 mini-claude-code/
-├── main.py                      # Entry point (CLI parsing only)
-├── test_all.py                  # 40 self-tests (no API key needed)
-├── src/
-│   ├── entry.py                 # Console-script wrapper for 'minicc' command
+├── main.py                         # CLI 入口
+├── test_all.py                     # 测试套件（无需 API key）
 ├── pyproject.toml
 ├── requirements.txt
-├── README.md
-├── .gitignore
-├── .sessions/                   # Session log directory (data ignored)
-├── fig/                         # Banner image
-└── src/
-    ├── __init__.py
-    ├── app.py                   # Application wiring (provider, tools, agent)
-    ├── config.py                # Global config (model, thresholds, max rounds)
-    ├── context.py               # System prompt builder + compaction
-    ├── terminal.py              # ANSI styling, menus, paste detection, no-color
-    ├── repl.py                  # Interactive loop, banner, prompt
-    ├── commands.py              # Slash commands + resume handlers
-    ├── agent/
-    │   ├── __init__.py
-    │   └── loop.py              # MiniClaudeAgent (LLM ↔ tool loop)
-    ├── llm/
-    │   ├── __init__.py
-    │   ├── provider.py          # LLMProvider ABC + ToolCall/LLMResponse
-    │   ├── anthropic_provider.py  # Anthropic with streaming
-    │   └── openai_provider.py     # OpenAI/DeepSeek with streaming
-    ├── tools/
-    │   ├── __init__.py
-    │   ├── base.py              # Tool ABC
-    │   ├── registry.py          # ToolRegistry (Anthropic + OpenAI schemas)
-    │   ├── file_tools.py        # ReadFile, WriteFile, ListFiles, SearchFiles
-    │   ├── shell_tool.py        # RunShell (encoding auto-detect, venv PATH)
-    │   └── git_tools.py         # GitDiff (unstaged + staged)
-    ├── workspace/
-    │   ├── __init__.py
-    │   └── sandbox.py           # Path sandbox (escape prevention)
-    ├── security/
-    │   ├── __init__.py
-    │   └── permission.py        # PermissionManager (plan/ask/auto + menus)
-    └── session/
-        ├── __init__.py
-        └── logger.py            # JSONL logger + resume + cleanup
+├── src/
+│   ├── entry.py                    # console_scripts 入口
+│   ├── app.py                      # 引导程序（组装 provider/tools/engine）
+│   ├── config.py                   # 多源配置（CLI > env > TOML）
+│   ├── context.py                  # 系统提示构建 + 压缩
+│   ├── terminal.py                 # ANSI 终端样式 + 键盘菜单
+│   ├── repl.py                     # 交互 REPL 循环
+│   ├── commands.py                 # 斜杠命令 + 恢复逻辑
+│   ├── agent/
+│   │   └── loop.py                 # Engine — while True 主循环
+│   ├── llm/
+│   │   ├── provider.py             # LLMProvider 抽象
+│   │   ├── anthropic_provider.py   # Anthropic（流式）
+│   │   └── openai_provider.py      # OpenAI/DeepSeek（流式）
+│   ├── tools/
+│   │   ├── base.py                 # Tool 协议 + ToolResult
+│   │   ├── registry.py             # 工具注册表
+│   │   ├── file_tools.py           # ReadFile, WriteFile, FileEditTool, ListFiles, SearchFiles
+│   │   ├── shell_tool.py           # RunShell（后台/超时/exit code 语义）
+│   │   └── git_tools.py            # GitDiff
+│   ├── features/
+│   │   ├── memory.py               # KAIROS 记忆系统
+│   │   ├── skills.py               # Skills 发现和注册
+│   │   ├── skills_bundled.py       # 内建 skills
+│   │   ├── plan.py                 # Plan 模式
+│   │   ├── compact.py              # 压缩服务
+│   │   └── cost_tracker.py         # Token 成本追踪
+│   ├── workspace/
+│   │   └── sandbox.py              # 路径沙箱
+│   ├── security/
+│   │   └── permission.py           # 权限检查（自杀防护 + 高危命令）
+│   └── session/
+│       └── logger.py               # SessionStore + SessionLogger
 ```
 
-## Quick test
+## 快速测试
 
 ```bash
-# Run all 40 unit tests (no API key required)
-python test_all.py
-
-# Demo: fix a bug with the agent
-minicc
-> Run the tests and fix any failures
+# 18 个单元测试
+python -m pytest test_all.py -v
 ```
+
+## 架构参考
+
+本项目的核心循环、压缩、权限管线基于 Claude Code（Anthropic 官方 CLI）的源码翻译：
+- `agent/loop.py` ← `src/query.ts` queryLoop()
+- 自动压缩 ← `src/services/compact/autoCompact.ts`
+- 终端样式 ← Claude Code 的 ↳ 输出风格
+- 工具协议 ← `src/Tool.ts`
