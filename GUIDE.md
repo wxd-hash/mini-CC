@@ -603,7 +603,28 @@ echo "DEEPSEEK_API_KEY=sk-..." > .env
 docker compose run --rm minicc
 ```
 
-### 17.3 容器内的工具
+### 17.3 设为全局命令
+
+安装包装脚本后，在任何目录直接敲 `minicc`，和本地安装体验完全一致：
+
+```bash
+# macOS / Linux
+sudo cp docker-minicc.sh /usr/local/bin/minicc
+sudo chmod +x /usr/local/bin/minicc
+
+# 之后任何目录都可以:
+cd ~/my-project
+minicc
+minicc "跑一下测试"
+minicc --resume
+```
+
+包装脚本自动完成三件事：
+1. 把当前目录挂载为容器内的 `/home/coder/workspace`
+2. 透传所有 API 相关的环境变量（DEEPSEEK_API_KEY 等）
+3. 挂载 `~/.config/mini-claude` 让记忆跨容器持久化
+
+### 17.4 容器内的工具
 
 | 工具 | 版本 | 说明 |
 |------|------|------|
@@ -613,4 +634,4 @@ docker compose run --rm minicc
 | anthropic SDK | 最新 | 调用 Claude |
 | openai SDK | 最新 | 调用 DeepSeek |
 
-容器已通过 `sandbox ok` 路径沙箱验证，所有文件操作限制在 `/home/coder/workspace` 内。
+容器已通过 `sandbox ok` 路径沙箱验证，所有文件操作限制在 workspace 内。

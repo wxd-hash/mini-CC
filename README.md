@@ -275,43 +275,41 @@ mini-claude-code/
 
 ## Docker 运行
 
-已内置 git + ripgrep，非 root 用户运行，所有文件操作在挂载的 workspace 目录内。
-
-### 设为全局命令
-
-安装包装脚本后，在任何目录直接敲 `minicc`：
-
-**macOS / Linux:**
-```bash
-sudo cp docker-minicc.sh /usr/local/bin/minicc
-sudo chmod +x /usr/local/bin/minicc
-```
-
-**Windows PowerShell:**
-```powershell
-cp docker-minicc.ps1 $PROFILE\..\minicc.ps1
-```
-
-之后任何目录敲 `minicc` 即可，和本地安装体验完全一致。
+内置 git + ripgrep，非 root 用户运行，所有操作在挂载的 workspace 内。
 
 ```bash
-# 构建镜像
+# 构建（只需一次）
 docker build -t minicc .
 
-# 交互模式（挂载当前目录为工作区）
+# 交互模式
 docker run -it --rm \
   -v "$(pwd):/home/coder/workspace" \
   -e DEEPSEEK_API_KEY="sk-..." \
   minicc
 
-# 非交互一行命令
+# 一行命令
 docker run --rm \
   -v "$(pwd):/home/coder/workspace" \
   -e DEEPSEEK_API_KEY="sk-..." \
   minicc "项目里有哪些测试文件？"
+```
 
-# 或用 docker-compose（先创建 .env 放 API key）
-docker compose run --rm minicc
+### 设为全局命令（推荐）
+
+安装包装脚本后，**任何目录**直接敲 `minicc`，和本地安装完全一样：
+
+**macOS / Linux:**
+```bash
+sudo cp docker-minicc.sh /usr/local/bin/minicc
+sudo chmod +x /usr/local/bin/minicc
+# 现在任何目录都可以直接 minicc
+```
+
+**Windows PowerShell:**
+```powershell
+cp docker-minicc.ps1 $PROFILE\..\docker-minicc.ps1
+# 在 $PROFILE 中添加:
+#   function minicc { & "$env:USERPROFILE\Documents\WindowsPowerShell\docker-minicc.ps1" @args }
 ```
 
 ## 安装（本地 Python）
