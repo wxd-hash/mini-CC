@@ -66,7 +66,7 @@ cd mini-CC
 
 # 创建虚拟环境
 python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\pip install -r requirements.txt    # 含 anthropic, openai, python-dotenv
 .venv\Scripts\pip install -e .
 
 # 设置 API key
