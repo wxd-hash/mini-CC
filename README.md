@@ -23,28 +23,25 @@
 
 ## 快速开始
 
-### 方式一：Docker（推荐，零依赖）
+### 方式一：pip 安装（有 Python 就用这个）
 
-需要先安装 [Docker Desktop](https://www.docker.com/products/docker-desktop/)。
+```bash
+# 一行安装（需要 Python 3.12+）
+pip install git+https://github.com/wxd-hash/mini-CC.git
 
-```powershell
-# 1. 克隆项目
-git clone https://github.com/wxd-hash/mini-CC.git
-cd mini-CC
-
-# 2. 构建镜像（只需一次）
-docker build -t minicc .
-
-# 3. 设置 API key
-# PowerShell 永久保存：
+# 设置 API key
+# Windows PowerShell（永久）：
 [Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "sk-你的key", "User")
-# 然后关闭 PowerShell 重新打开
+# macOS / Linux：
+export DEEPSEEK_API_KEY="sk-你的key"
 
-# 4. 运行
-docker run -it --rm -v "${pwd}:/home/coder/workspace" -e DEEPSEEK_API_KEY minicc
+# 任何目录直接使用
+minicc "帮我创建 hello.py"
 ```
 
-如果想在任何目录直接用 `minicc` 命令：
+就是这么简单——`pip install` 自动把 `minicc` 命令注册到系统 PATH。
+
+### 方式二：Docker（无需 Python）
 
 ```powershell
 # 把包装脚本复制到 PATH
