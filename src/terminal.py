@@ -235,15 +235,13 @@ def select_menu(options: list[str]) -> int:
     _utf8_buf = b""
     _drain_console_buffer()
 
-    # Save cursor position before rendering menu
-    sys.stdout.write("\033[s")
-    sys.stdout.flush()
+    # First render (print n lines + cursor ends below them)
+    _render()
 
     sys.stdout.write("\033[?25l")  # hide cursor
     sys.stdout.flush()
 
     try:
-        _render()
         while True:
             ch = _getch()
             if ch in ("\r", "\n", " "):
@@ -257,7 +255,7 @@ def select_menu(options: list[str]) -> int:
                     elif arrow == "B":
                         selected = (selected + 1) % n
                 else:
-                    return -1  # plain ESC = cancel
+                    return -1
             elif ch in ("\x00", "\xe0"):
                 k = _getch()
                 if k == "H":
@@ -271,9 +269,9 @@ def select_menu(options: list[str]) -> int:
             elif ch == "q":
                 return -1
 
-            # Restore cursor to menu start, clear to end of screen, re-render
-            sys.stdout.write("\033[u")   # restore saved cursor position
-            sys.stdout.write("\033[J")   # clear from cursor to end of screen
+            # Move up n lines, clear from there to end, re-render
+            sys.stdout.write(f"\033[{n}A")    # up to menu start
+            sys.stdout.write("\033[J")         # clear to end of screen
             sys.stdout.flush()
             _render()
     finally:
