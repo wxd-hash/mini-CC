@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from src import terminal as term
+from src.agent.loop import AbortedError
 from src.security.permission import PermissionChecker
 from src.tools.registry import ToolRegistry
 
@@ -131,8 +132,10 @@ def run_repl(
         # Normal query → submit to engine (NEVER exit on error)
         try:
             engine.run(stripped)
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt, AbortedError):
+            # Ctrl+C or Esc — cancel current turn, return to prompt
             print()
+            print(term.info("Turn cancelled."))
             continue
         except Exception as e:
             # Catch ALL errors — the REPL must NEVER die
