@@ -15,4 +15,4 @@ build-backend = "setuptools.build_meta"
 py-modules = ["main"]
 
 [tool.setuptools.packages.find]
-where = ["src"]
+include = ["src", "src.*"]
