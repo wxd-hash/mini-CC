@@ -218,30 +218,21 @@ def select_menu(options: list[str]) -> int:
 
     def _render() -> None:
         for i, opt in enumerate(options):
-            # Clear to end of line before writing (prevents stale text from
-            # longer previous options from showing after re-render)
             if i == selected:
-                sys.stdout.write(
-                    f"\033[K    {_BRIGHT}{_GREEN}▸ {opt}{_RESET}   \n"
-                )
+                print(f"    {_BRIGHT}{_GREEN}▸ {opt}{_RESET}   ")
             else:
-                sys.stdout.write(
-                    f"\033[K    {_DIM}  {opt}{_RESET}   \n"
-                )
-        sys.stdout.flush()
+                print(f"    {_DIM}  {opt}{_RESET}   ")
 
     # Drain leftover stdin + reset UTF-8 buffer
     global _utf8_buf
     _utf8_buf = b""
     _drain_console_buffer()
 
-    # First render (print n lines + cursor ends below them)
-    _render()
-
-    sys.stdout.write("\033[?25l")  # hide cursor
+    sys.stdout.write("\033[?25l")
     sys.stdout.flush()
 
     try:
+        _render()
         while True:
             ch = _getch()
             if ch in ("\r", "\n", " "):
@@ -269,13 +260,11 @@ def select_menu(options: list[str]) -> int:
             elif ch == "q":
                 return -1
 
-            # Move up n lines, clear from there to end, re-render
-            sys.stdout.write(f"\033[{n}A")    # up to menu start
-            sys.stdout.write("\033[J")         # clear to end of screen
+            sys.stdout.write(f"\033[{n}A")
             sys.stdout.flush()
             _render()
     finally:
-        sys.stdout.write("\033[?25h")  # show cursor
+        sys.stdout.write("\033[?25h")
         sys.stdout.flush()
 
     return selected
@@ -353,26 +342,39 @@ def _getch() -> str:
 
 def _getch_win(msvcrt) -> str:
     global _utf8_buf
+    # Drain any leftover valid ASCII or broken bytes first
     while _utf8_buf:
         first = _utf8_buf[0]
-        if first <= 0x7F or not _can_be_utf8(_utf8_buf[:1]):
+        if first <= 0x7F:            # plain ASCII — return immediately
             _utf8_buf = _utf8_buf[1:]
             return chr(first)
-        break
+        if not _can_be_utf8(_utf8_buf[:1]):  # invalid start byte — skip
+            _utf8_buf = _utf8_buf[1:]
+            return chr(first)
+        break  # valid multi-byte UTF-8 start — need more bytes
 
     while True:
         b = msvcrt.getch()
+        # Windows extended keys (arrow keys, etc.) send \xe0 or \x00
+        # followed by a scan code. These are NOT UTF-8 — return immediately.
+        if b[0] <= 0x7F and not _utf8_buf:
+            return chr(b[0])
         _utf8_buf += b
         try:
             s = _utf8_buf.decode("utf-8")
             _utf8_buf = b""
-            if len(s) > 1:
-                return s
             return s
         except UnicodeDecodeError:
-            if len(_utf8_buf) >= 4:
+            # Non-UTF-8 byte (e.g. \xe0 from arrow keys).
+            # Drain one byte and return it, resetting the buffer.
+            if len(_utf8_buf) == 1 and _utf8_buf[0] >= 0x80:
+                _utf8_buf = b""
+                return chr(b[0])
+            # Accumulated garbage — drain oldest byte
+            if len(_utf8_buf) >= 3:
+                drained = _utf8_buf[0]
                 _utf8_buf = _utf8_buf[1:]
-                return chr(_utf8_buf[0])
+                return chr(drained)
             continue
 
 
