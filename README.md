@@ -203,22 +203,32 @@ Select a session to resume:
 
 ## 项目记忆 (KAIROS)
 
-参考 Claude Code 的 `extractMemories` 设计。每轮对话后自动启动后台**子 Agent**，审阅对话 transcript 并提取更新记忆。
+参考 Claude Code 的 `extractMemories` + `memoryAge` 设计。每轮对话后自动启动后台**子 Agent**，审阅对话 transcript 并提取更新记忆。
 
-存储格式：每个记忆一个独立 `.md` 文件（带 YAML frontmatter），`MEMORY.md` 作为索引。
+### 存储格式
+
+每个记忆一个独立 `.md` 文件（YAML frontmatter），`MEMORY.md` 作索引：
 
 ```
 ~/.config/mini-claude/memory/
-├── MEMORY.md              ← 索引，注入系统提示
+├── MEMORY.md              ← 索引文件
 ├── user_role.md           ← 用户角色/偏好
 ├── feedback_testing.md    ← 用户反馈/规则
 ├── project_xxx.md         ← 项目状态/截止日期
 └── reference_xxx.md       ← 外部资源引用
 ```
 
-四种记忆类型：**user**（用户偏好）、**feedback**（反馈）、**project**（项目状态）、**reference**（外部资源）。
+四种类型：**user** / **feedback** / **project** / **reference**。
 
-主 agent 也可以直接调用 write_file/edit_file 写入记忆目录，系统检测到后会自动跳过子 agent 提取。
+### 过期处理
+
+**不自动删除**旧记忆，而是根据文件修改时间注入提示：
+- 1 天内的记忆：正常加载
+- 超过 1 天的记忆：注入 `此记忆是 X 天前的，可能已过时，请验证`
+
+模型看到提示后会自行判断该信还是该验证（"用 pytest"永远不过期，"第 23 行有 bug"三天后大概率失效）。
+
+容量保护：最多 200 个文件 + MEMORY.md 截断 200 行 + 孤儿文件自动清理。
 
 ## 项目结构
 
