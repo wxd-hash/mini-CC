@@ -63,7 +63,6 @@ class OpenAIProvider(LLMProvider):
             delta = chunk.choices[0].delta
             if delta.content:
                 text_parts.append(delta.content)
-                print(delta.content, end="", flush=True)
             if delta.tool_calls:
                 for tc_delta in delta.tool_calls:
                     idx = tc_delta.index

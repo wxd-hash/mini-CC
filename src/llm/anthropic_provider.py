@@ -41,7 +41,6 @@ class AnthropicProvider(LLMProvider):
             text_parts: list[str] = []
             for delta in stream.text_stream:
                 text_parts.append(delta)
-                print(delta, end="", flush=True)
 
             final = stream.get_final_message()
 
