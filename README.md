@@ -101,26 +101,22 @@ export DEEPSEEK_API_KEY="sk-..."
 ## 使用
 
 ```bash
-# 默认 DeepSeek，ask 模式
+# 全局命令（安装 minicc 后）
 minicc
 
-# 用 Anthropic
-minicc --provider anthropic --model sonnet
+# 或直接用 Python 启动（不需要全局命令）
+.venv\Scripts\python.exe main.py
+python main.py
+```
 
-# 指定工作目录
-minicc --workspace E:\my_project
+### 详细命令示例
 
-# CI / 管道模式
-minicc --no-color
-
-# 一行命令（非交互）
-minicc "项目里有哪些测试文件？"
-
-# 恢复之前的会话
-minicc --resume
-
-# 自动允许模式（跳过权限确认）
-minicc --mode auto
+```bash
+# 完整路径启动（不需要全局命令，把所有参数写到一起）
+.venv\Scripts\python.exe main.py \
+  --provider deepseek \
+  --workspace . \
+  --mode ask
 ```
 
 ### CLI 选项
