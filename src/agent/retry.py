@@ -88,6 +88,9 @@ def _is_retryable(err_msg: str, exc: Exception) -> bool:
 # Streaming model call with retry
 # ---------------------------------------------------------------------------
 
+_HIDE_RETRY_UNTIL_ATTEMPT = 3  # suppress first 3 retries (claude-code behavior)
+
+
 class _CallAborted(Exception):
     """Internal signal to stop retries."""
 
@@ -135,7 +138,8 @@ def call_model_with_retry(
                 reduced = current_max_tokens // 2
                 if reduced >= 1024:
                     current_max_tokens = reduced
-                    yield TextDelta(f"\n[Context overflow → max_tokens={reduced}, retrying...]\n")
+                    if attempt >= _HIDE_RETRY_UNTIL_ATTEMPT:
+                        yield TextDelta(f"\n[Context overflow → max_tokens={reduced}, retrying...]\n")
                     continue
                 yield StreamEnd(
                     assistant_message={},
@@ -146,7 +150,8 @@ def call_model_with_retry(
             if _is_retryable(err_msg, exc):
                 if attempt < MAX_RETRIES - 1:
                     wait = _compute_retry_delay(attempt, _parse_retry_after(exc))
-                    yield TextDelta(f"\n[API error, retrying in {wait:.1f}s...]\n")
+                    if attempt >= _HIDE_RETRY_UNTIL_ATTEMPT:
+                        yield TextDelta(f"\n[API error, retrying in {wait:.1f}s...]\n")
                     time.sleep(wait)
                     continue
                 yield StreamEnd(

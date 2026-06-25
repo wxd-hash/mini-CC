@@ -235,14 +235,22 @@ class PermissionChecker:
 
     def _prompt(self, tool_name: str, tool_input: dict[str, Any]) -> bool:
         summary = self._summarize(tool_name, tool_input)
-        print()
-        print(term.permission_prompt(f"Allow {summary}?"))
+        title = {
+            "run_shell": "Shell 命令",
+            "write_file": "写入文件",
+            "edit_file": "编辑文件",
+        }.get(tool_name, tool_name)
 
-        options = ["Yes", "Yes, and don't ask again", "No"]
+        options = ["是", "是，不再询问", "否"]
         try:
-            idx = term.select_menu(options)
+            idx = term.select_menu(
+                options,
+                title=f"{title}: {summary}",
+                footer="Esc 拒绝 · Enter 确认",
+            )
         except Exception:
             # Fallback: if terminal doesn't support raw input, use input()
+            print(f"  {term._YELLOW}[auth]{term._RESET} Allow {summary}?")
             print("  [y] Yes  [a] Yes, always  [n] No  ", end="", flush=True)
             try:
                 resp = input().strip().lower()

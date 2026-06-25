@@ -3,14 +3,16 @@
 Key patterns from claude-code:
   ↳ ToolName(args)                   ← tool call, dim
   ↳ ToolName(args) ... ⏳ running    ← tool executing
-  ↳ ToolName(args) ... ✓ done        ← tool success
-  ↳ ToolName(args) ... ✗ error       ← tool failure
+    ⎿ result line 1                   ← tool success (multi-line)
+    ⎿ result line 2
+    ⎿ ... +N lines                    ← overflow indicator
   [auth] message                      ← permission prompt (yellow)
   BLOCKED: message                    ← self-destruct blocked (red)
 """
 
 from __future__ import annotations
 
+import random
 import sys
 
 import colorama
@@ -41,38 +43,101 @@ def set_no_color() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Spinner — animated progress indicator (matches claude-code)
+# ---------------------------------------------------------------------------
+
+_SPINNER_FRAMES = ["·", "✢", "✱", "✶", "✻", "✽"]  # · ✢ ✱ ✶ ✻ ✽
+
+_SPINNER_VERBS = [
+    "思考中", "读取中", "分析中", "处理中", "计算中", "检索中",
+    "编写中", "检查中", "编译中", "运行中", "加载中", "解析中",
+]
+
+_MAX_RESULT_LINES = 3  # show at most this many lines
+
+
+class Spinner:
+    """Animated progress indicator for tool execution.
+
+    Usage::
+
+        spinner = Spinner()
+        while tool_running:
+            print(spinner.next(), end="", flush=True)
+    """
+
+    def __init__(self) -> None:
+        self._frame = 0
+        self._verb = random.choice(_SPINNER_VERBS)
+
+    def next(self) -> str:
+        """Return the next spinner frame with reset escape for in-place refresh."""
+        frame_char = _SPINNER_FRAMES[self._frame % len(_SPINNER_FRAMES)]
+        self._frame += 1
+        return f"\r    {_DIM}  {frame_char}  {self._verb}{_RESET}"
+
+
+# ---------------------------------------------------------------------------
 # Tool display — matches claude-code's ↳ prefix pattern
 # ---------------------------------------------------------------------------
 
 def tool_call(name: str, params: str) -> str:
     """Tool call header — matches claude-code '↳ ToolName(params)'."""
-    return f"  {_DIM}↳ {_CYAN}{name}{_RESET}{_DIM}({params}){_RESET}"
+    return f"\n  {_DIM}↳ {_CYAN}{name}{_RESET}{_DIM}({params}){_RESET}"
 
 
 def tool_running(name: str, params: str, activity: str = "") -> str:
-    """Tool executing — indented below call line."""
+    """Tool executing status — returns a line suitable for spinner overlay."""
     label = activity or "..."
     return f"    {_DIM}  ...  {label}{_RESET}"
 
 
-def tool_done(result: str, max_len: int = 200) -> str:
-    """Tool result — indented below tool call: '     ✓ result'."""
-    if len(result) > max_len:
-        result = result[:max_len] + "..."
-    first_line = result.split("\n")[0].strip()
-    return f"    {_GREEN}✓{_RESET} {_DIM}{first_line}{_RESET}"
+def tool_done(content: str, max_len: int = 200) -> str:
+    """Tool result — multi-line with ⎿ prefix, up to 3 lines.
+
+    Matches claude-code's MessageResponse pattern::
+          ⎿  first line of result
+          ⎿  second line
+          ⎿  ... +N lines
+    """
+    return _format_result(content, max_len, is_error=False)
 
 
-def tool_error(result: str, max_len: int = 200) -> str:
-    """Tool error — indented below tool call: '     ✗ error'."""
-    if len(result) > max_len:
-        result = result[:max_len] + "..."
-    first_line = result.split("\n")[0].strip()
-    return f"    {_RED}✗{_RESET} {_RED}{first_line}{_RESET}"
+def tool_error(content: str, max_len: int = 200) -> str:
+    """Tool error — multi-line with ⎿ prefix, red color."""
+    return _format_result(content, max_len, is_error=True)
 
 
-# -- Legacy compat aliases (kept for existing callers) -----------------------
+def _format_result(content: str, max_len: int, is_error: bool) -> str:
+    color = _RED if is_error else _DIM
+    lines = content.split("\n")
+    total = len(lines)
 
+    # Trim each line
+    trimmed: list[str] = []
+    for line in lines:
+        stripped = line.rstrip()
+        if len(stripped) > max_len:
+            stripped = stripped[:max_len] + "..."
+        trimmed.append(stripped)
+
+    if not trimmed:
+        return f"    {color}⎿  (empty){_RESET}"
+
+    # Show at most MAX_RESULT_LINES
+    shown = trimmed[:_MAX_RESULT_LINES]
+    parts = []
+    for line in shown:
+        parts.append(f"    {color}⎿  {line}{_RESET}")
+
+    if total > _MAX_RESULT_LINES:
+        remaining = total - _MAX_RESULT_LINES
+        parts.append(f"    {_DIM}⎿  ... +{remaining} 行{_RESET}")
+
+    return "\n".join(parts)
+
+
+# -- Legacy compat aliases ---------------------------------------------------
 
 def tool_header(name: str, params: str) -> str:
     """Legacy compat — use tool_call instead."""
@@ -133,18 +198,18 @@ def warning(text: str) -> str:
 
 
 def compact(before: int, after: int) -> str:
-    """Compaction notice."""
-    return f"  {_DIM}[compacted {before} → {after} messages]{_RESET}"
+    """Compaction notice — matches claude-code style."""
+    return f"\n  {_DIM}✻ 对话已压缩（{before} → {after} 条消息，腾出上下文空间）{_RESET}\n"
 
 
 def turn_warning(count: int) -> str:
     """Turn count warning — when tool rounds get high."""
-    return f"\n  {_YELLOW}[{count} tool rounds — still working, Ctrl+C to stop]{_RESET}\n"
+    return f"\n  {_YELLOW}[{count} 轮工具调用 — 仍在工作中，Ctrl+C 可停止]{_RESET}\n"
 
 
 def turn_limit(count: int) -> str:
     """Turn limit reached — forcing wrap-up."""
-    return f"\n  {_YELLOW}[{count} rounds, wrapping up]{_RESET}\n"
+    return f"\n  {_YELLOW}[{count} 轮，即将结束]{_RESET}\n"
 
 
 # ---------------------------------------------------------------------------
@@ -161,12 +226,7 @@ def bold(text: str) -> str:
 
 
 def hr_fixed(width: int = 50) -> str:
-    try:
-        "─".encode(sys.stdout.encoding)
-        ch = "─"
-    except (UnicodeEncodeError, AttributeError):
-        ch = "-"
-    return _DIM + ch * width + _RESET
+    return _DIM + _safe_hr_char() * width + _RESET
 
 
 def hr() -> str:
@@ -176,17 +236,25 @@ def hr() -> str:
         w = shutil.get_terminal_size().columns
     except Exception:
         w = 80
+    return _DIM + _safe_hr_char() * min(w, 120) + _RESET
+
+
+def _safe_hr_char() -> str:
     try:
         "─".encode(sys.stdout.encoding)
-        ch = "─"
+        return "─"
     except (UnicodeEncodeError, AttributeError):
-        ch = "-"
-    return _DIM + ch * min(w, 120) + _RESET
+        return "-"
 
 
 def prompt() -> str:
-    """Prompt marker."""
-    return f"{_BOLD_GREEN}>{_RESET}"
+    """Prompt marker — ❯ on modern terminals, > on restricted ones."""
+    try:
+        "❯".encode(sys.stdout.encoding)
+        ch = "❯"  # ❯
+    except (UnicodeEncodeError, AttributeError):
+        ch = ">"
+    return f"{_BOLD_GREEN}{ch}{_RESET} "
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +270,11 @@ def tool_result(text: str) -> str:
 # Select menu — interactive keyboard navigation
 # ---------------------------------------------------------------------------
 
-def select_menu(options: list[str]) -> int:
+def select_menu(
+    options: list[str],
+    title: str = "",
+    footer: str = "",
+) -> int:
     """Show interactive menu with ↑↓/jk/ws navigation, Enter to confirm.
 
     Returns index (0-based), -1 if cancelled (Esc/q).
@@ -215,13 +287,21 @@ def select_menu(options: list[str]) -> int:
         return 0
 
     selected = 0
+    hr_line = _DIM + _safe_hr_char() * 30 + _RESET
 
     def _render() -> None:
+        print()
+        if title:
+            print(f"  {_BOLD}{title}{_RESET}")
+            print(f"  {hr_line}")
         for i, opt in enumerate(options):
             if i == selected:
-                print(f"    {_BRIGHT}{_GREEN}▸ {opt}{_RESET}   ")
+                print(f"  {_BOLD}{_GREEN}▸ {opt}{_RESET}")  # ▸
             else:
-                print(f"    {_DIM}  {opt}{_RESET}   ")
+                print(f"  {_DIM}  {opt}{_RESET}")
+        if footer:
+            print(f"  {hr_line}")
+            print(f"  {_DIM}{footer}{_RESET}")
 
     # Drain leftover stdin + reset UTF-8 buffer
     global _utf8_buf
@@ -260,7 +340,14 @@ def select_menu(options: list[str]) -> int:
             elif ch == "q":
                 return -1
 
-            sys.stdout.write(f"\033[{n}A")
+            # Move cursor up to re-render
+            # Line count: 1 (empty print) + N options + optional title/footer
+            rendered_lines = 1 + len(options)
+            if title:
+                rendered_lines += 2  # title + hr
+            if footer:
+                rendered_lines += 2  # hr + footer
+            sys.stdout.write(f"\033[{rendered_lines}A")
             sys.stdout.flush()
             _render()
     finally:
@@ -342,21 +429,18 @@ def _getch() -> str:
 
 def _getch_win(msvcrt) -> str:
     global _utf8_buf
-    # Drain any leftover valid ASCII or broken bytes first
     while _utf8_buf:
         first = _utf8_buf[0]
-        if first <= 0x7F:            # plain ASCII — return immediately
+        if first <= 0x7F:
             _utf8_buf = _utf8_buf[1:]
             return chr(first)
-        if not _can_be_utf8(_utf8_buf[:1]):  # invalid start byte — skip
+        if not _can_be_utf8(_utf8_buf[:1]):
             _utf8_buf = _utf8_buf[1:]
             return chr(first)
-        break  # valid multi-byte UTF-8 start — need more bytes
+        break
 
     while True:
         b = msvcrt.getch()
-        # Windows extended keys (arrow keys, etc.) send \xe0 or \x00
-        # followed by a scan code. These are NOT UTF-8 — return immediately.
         if b[0] <= 0x7F and not _utf8_buf:
             return chr(b[0])
         _utf8_buf += b
@@ -365,12 +449,9 @@ def _getch_win(msvcrt) -> str:
             _utf8_buf = b""
             return s
         except UnicodeDecodeError:
-            # Non-UTF-8 byte (e.g. \xe0 from arrow keys).
-            # Drain one byte and return it, resetting the buffer.
             if len(_utf8_buf) == 1 and _utf8_buf[0] >= 0x80:
                 _utf8_buf = b""
                 return chr(b[0])
-            # Accumulated garbage — drain oldest byte
             if len(_utf8_buf) >= 3:
                 drained = _utf8_buf[0]
                 _utf8_buf = _utf8_buf[1:]

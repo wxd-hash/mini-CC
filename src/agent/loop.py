@@ -23,6 +23,7 @@ from src.context import build_system_prompt, compact_messages, micro_compact
 from src.llm.provider import LLMProvider, TextDelta, ToolUseBlock, StreamEnd
 from src.security.permission import PermissionChecker, _is_self_destructive as _is_self_destructive_cmd
 from src.session.logger import SessionLogger, SessionStore
+from src.utils.markdown import render as render_markdown
 from src import terminal as term
 
 # ---------------------------------------------------------------------------
@@ -247,18 +248,30 @@ class Engine:
         self._permissions.reset_for_turn()
         last_text = ""
         has_output = False
+        # Buffer text chunks per assistant response; render as markdown when
+        # the text phase ends (tool_call or end of submit) because streaming
+        # API splits markdown patterns across tiny chunks.
+        _buf: list[str] = []
+
+        def _flush_buf() -> str:
+            nonlocal _buf
+            if not _buf:
+                return ""
+            full = "".join(_buf)
+            _buf.clear()
+            return full
 
         for event in self.submit(user_input):
             ev_type = event[0]
             if ev_type == "text":
-                # Reset when tool calls occur between assistant responses
-                # so last_text always reflects the CURRENT assistant's text
-                last_text += event[1]
-                if not quiet:
-                    print(event[1], end="", flush=True)
+                chunk = event[1]
+                last_text += chunk
+                _buf.append(chunk)
                 has_output = True
             elif ev_type == "tool_call":
-                # Next text event will be from a new assistant response
+                # Flush buffered text before showing tool calls
+                if _buf and not quiet:
+                    print(render_markdown(_flush_buf()), end="", flush=True)
                 last_text = ""
             elif ev_type == "error":
                 if not quiet:
@@ -269,6 +282,10 @@ class Engine:
                     print(term.tool_running(name, self._fmt_params(params), activity or ""))
             elif ev_type == "waiting":
                 pass
+
+        # Flush remaining buffered text at end of response
+        if _buf and not quiet:
+            print(render_markdown(_flush_buf()), end="", flush=True)
 
         if has_output and last_text and not quiet:
             print()
@@ -499,12 +516,12 @@ class Engine:
     # ------------------------------------------------------------------
 
     def _show_tool_result_tu(self, name: str, args: dict[str, Any], result: str) -> tuple:
-        """Show tool result in terminal and return event tuple."""
+        """Show tool result in terminal (multi-line ⎿ format) and return event tuple."""
         is_err = "Error" in result or "error" in result or "denied" in result.lower()
         if is_err:
-            print(term.tool_error(self._truncate(result, 200)))
+            print(term.tool_error(result))
         else:
-            print(term.tool_done(self._truncate(result, 200)))
+            print(term.tool_done(result))
         return ("tool_result", name, args, result)
 
     def _flush_tool_results(self, items: list[tuple[str, str, dict[str, Any], str]]) -> None:

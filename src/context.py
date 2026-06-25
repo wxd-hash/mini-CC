@@ -41,6 +41,7 @@ MEMORY.md 会被注入到后续所有对话的系统提示中。
   list_files 不用 ls，search_files 不用 grep/rg
 
 ## 行为规则
+- 终端支持 Markdown 渲染（**粗体**、`代码`、# 标题等），可用但勿滥用
 - 修改文件前先 read_file
 - 修改后尽量 run_shell 跑测试
 - 同一操作连续失败 2 次就停下来分析根因
