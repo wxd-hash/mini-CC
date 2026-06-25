@@ -339,6 +339,12 @@ class Engine:
         If quiet=True, suppresses all terminal output (used by sub-agents).
         """
         self._permissions.reset_for_turn()
+
+        # ── First message of session → generate title ──
+        if len(self._messages) == 0 and not quiet and self._session_store:
+            if getattr(self._provider, 'provider_name', '') != 'mock':
+                self._generate_session_title(user_input)
+
         last_text = ""
         has_output = False
         for event in self.submit(user_input):
@@ -367,6 +373,30 @@ class Engine:
             self._extract_memories()
 
         return last_text if last_text else None
+
+    def _generate_session_title(self, user_input: str) -> None:
+        """Generate a session title from the first user message.
+
+        Makes a cheap direct API call (no tools, low max_tokens) to get a
+        short title. Matches claude-code's generateSessionTitle pattern.
+        """
+        prompt = (
+            "Generate a concise title (3-8 words) for this coding session. "
+            "Return ONLY the title, no quotes, no extra text.\n\n"
+            f"User: {user_input[:200]}"
+        )
+        try:
+            response = self._provider.send_message(
+                system_prompt="You are a title generator. Return only the title.",
+                messages=[self._provider.make_user_message(prompt)],
+                tools=[],
+                max_tokens=64,
+            )
+            title = response.text.strip().strip('"').strip("'").strip()[:80]
+            if title and self._session_store:
+                self._session_store.set_title(title)
+        except Exception:
+            pass  # Non-essential
 
     def _extract_memories(self) -> None:
         """Run memory extraction sub-agent in background (matches claude-code)."""

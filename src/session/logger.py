@@ -73,6 +73,11 @@ class SessionStore:
     def title(self) -> str:
         return self._first_user_text[:60] if self._first_user_text else "(new session)"
 
+    def set_title(self, title: str) -> None:
+        """Explicitly set the session title (e.g. from AI-generated name)."""
+        self._first_user_text = title
+        self._write_meta()
+
     # -- message persistence --------------------------------------------------
 
     def append_message(self, message: dict[str, Any]) -> None:
