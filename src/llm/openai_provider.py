@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Iterator
 
 from openai import OpenAI
 
-from src.llm.provider import LLMProvider, ToolCall, LLMResponse
+from src.llm.provider import LLMProvider, ToolCall, LLMResponse, TextDelta, ToolUseBlock, StreamEnd
 
 
 class OpenAIProvider(LLMProvider):
@@ -30,7 +30,7 @@ class OpenAIProvider(LLMProvider):
         return "openai"
 
     # ------------------------------------------------------------------
-    # Send (with streaming)
+    # Send (legacy — returns complete response)
     # ------------------------------------------------------------------
 
     def send_message(
@@ -108,6 +108,94 @@ class OpenAIProvider(LLMProvider):
             tool_calls=tool_calls,
             assistant_message=assistant_msg,
         )
+
+    # ------------------------------------------------------------------
+    # Send (streaming — yields events as they arrive)
+    # ------------------------------------------------------------------
+
+    def send_message_stream(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_tokens: int = 4096,
+    ) -> Iterator[TextDelta | ToolUseBlock | StreamEnd]:
+        """Stream model response.
+
+        Yields TextDelta for incremental text. OpenAI streaming does not
+        provide per-block completion signals, so ToolUseBlocks are yielded
+        after the full response is received, followed by StreamEnd.
+        """
+        full_messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+            *messages,
+        ]
+
+        response = self._client.chat.completions.create(
+            model=self.model,
+            messages=full_messages,
+            tools=tools,
+            max_tokens=max_tokens,
+            stream=True,
+        )
+
+        text_parts: list[str] = []
+        tool_calls_acc: dict[int, dict[str, Any]] = {}
+
+        for chunk in response:
+            delta = chunk.choices[0].delta
+            if delta.content:
+                text_parts.append(delta.content)
+                yield TextDelta(text=delta.content)
+            if delta.tool_calls:
+                for tc_delta in delta.tool_calls:
+                    idx = tc_delta.index
+                    if idx not in tool_calls_acc:
+                        tool_calls_acc[idx] = {
+                            "id": tc_delta.id or "",
+                            "name": tc_delta.function.name if tc_delta.function else "",
+                            "arguments": "",
+                        }
+                    entry = tool_calls_acc[idx]
+                    if tc_delta.id:
+                        entry["id"] = tc_delta.id
+                    if tc_delta.function:
+                        if tc_delta.function.name:
+                            entry["name"] = tc_delta.function.name
+                        if tc_delta.function.arguments:
+                            entry["arguments"] += tc_delta.function.arguments
+
+        text = "".join(text_parts)
+
+        # Parse completed tool calls
+        tool_calls: list[ToolCall] = []
+        for tc in sorted(tool_calls_acc.values(), key=lambda x: list(tool_calls_acc.keys())[list(tool_calls_acc.values()).index(x)]):
+            try:
+                args = json.loads(tc["arguments"])
+            except json.JSONDecodeError:
+                args = {}
+            tool_calls.append(ToolCall(id=tc["id"], name=tc["name"], arguments=args))
+
+        # Yield completed tool calls (all at once for OpenAI)
+        for tc in tool_calls:
+            yield ToolUseBlock(id=tc.id, name=tc.name, arguments=tc.arguments)
+
+        # Build assistant_message for history
+        assistant_msg: dict[str, Any] = {"role": "assistant"}
+        if tool_calls:
+            assistant_msg["content"] = None
+            assistant_msg["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.name, "arguments": json.dumps(tc.arguments, ensure_ascii=False)},
+                }
+                for tc in tool_calls
+            ]
+        else:
+            assistant_msg["content"] = text or None
+
+        yield StreamEnd(assistant_message=assistant_msg, text=text)
 
     # ------------------------------------------------------------------
     # Message builders

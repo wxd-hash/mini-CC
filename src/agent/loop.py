@@ -5,42 +5,25 @@ Core flow (matches claude-code exactly):
 1. Microcompact — truncate old tool results (zero-cost)
 2. Auto-compact — if token threshold exceeded, LLM-summarize history
 3. Stream API call — get model response with tools
-4. Execute tools — parallel batches for read-only tools
+4. Execute tools — StreamingToolExecutor runs tools as they arrive
 5. Continue loop or return terminal
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
-import random
-import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator
 
-from src.config import MAX_TOOL_ROUNDS, MAX_MESSAGES_BEFORE_COMPACT, KEEP_RECENT_MESSAGES
+from src.agent.retry import call_model_with_retry
+from src.agent.tool_executor import StreamingToolExecutor
+from src.config import MAX_TOOL_ROUNDS, KEEP_RECENT_MESSAGES
 from src.context import build_system_prompt, compact_messages, micro_compact
-from src.llm.provider import LLMProvider
+from src.llm.provider import LLMProvider, TextDelta, ToolUseBlock, StreamEnd
 from src.security.permission import PermissionChecker, _is_self_destructive as _is_self_destructive_cmd
 from src.session.logger import SessionLogger, SessionStore
 from src import terminal as term
-
-# ---------------------------------------------------------------------------
-# Retry constants (matches claude-code withRetry)
-# ---------------------------------------------------------------------------
-
-_MAX_RETRIES = 10
-_BASE_DELAY = 0.5
-_MAX_DELAY = 32.0
-_JITTER_FACTOR = 0.25
-
-_CONTEXT_OVERFLOW_RE = re.compile(
-    r"prompt is too long|max_tokens.*exceeds.*context|input.*too large|request too large",
-    re.IGNORECASE,
-)
 
 # ---------------------------------------------------------------------------
 # Auto-compact constants (matches claude-code autoCompact.ts)
@@ -53,53 +36,6 @@ MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3
 
 class AbortedError(Exception):
     """Raised when the current turn is aborted by the user."""
-
-
-# ---------------------------------------------------------------------------
-# Retry helpers (matches claude-code withRetry.ts)
-# ---------------------------------------------------------------------------
-
-def _compute_retry_delay(attempt: int, retry_after: float | None = None) -> float:
-    """Exponential backoff with jitter, respecting Retry-After."""
-    if retry_after is not None and retry_after > 0:
-        return retry_after
-    delay = min(_BASE_DELAY * (2 ** attempt), _MAX_DELAY)
-    jitter = delay * random.uniform(0, _JITTER_FACTOR)
-    return delay + jitter
-
-
-def _parse_retry_after(exc: Exception) -> float | None:
-    headers = getattr(getattr(exc, "response", None), "headers", None)
-    if headers is None:
-        return None
-    raw = headers.get("retry-after") or headers.get("Retry-After")
-    if raw is None:
-        return None
-    try:
-        return float(raw)
-    except (ValueError, TypeError):
-        return None
-
-
-def _is_auth_error(exc: Exception) -> bool:
-    exc_name = type(exc).__name__.lower()
-    if "auth" in exc_name or "unauthorized" in exc_name or "forbidden" in exc_name:
-        return True
-    msg = str(exc).lower()
-    return any(kw in msg for kw in ("authentication", "unauthorized", "invalid api key", "incorrect api key"))
-
-
-def _is_retryable(err_msg: str, exc: Exception) -> bool:
-    exc_name = type(exc).__name__.lower()
-    if any(kw in exc_name for kw in ("rate", "timeout", "server", "overloaded", "capacity")):
-        return True
-    msg_lower = err_msg.lower()
-    return any(
-        kw in msg_lower
-        for kw in ("rate limit", "too many requests", "server error", "internal error",
-                    "service unavailable", "timeout", "overloaded", "capacity",
-                    "retry", "try again", "503", "502", "504", "429")
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -124,11 +60,7 @@ def estimate_tokens(messages: list[dict[str, Any]]) -> int:
 
 
 def get_effective_context_window_size(model: str, max_tokens: int) -> int:
-    """Effective context window minus output reservation.
-
-    Matches claude-code's getEffectiveContextWindowSize().
-    """
-    # Approximate context window sizes by model family
+    """Effective context window minus output reservation."""
     model_lower = model.lower()
     if "opus" in model_lower:
         ctx = 200_000
@@ -148,10 +80,6 @@ def get_effective_context_window_size(model: str, max_tokens: int) -> int:
 
 
 def isAutoCompactEnabled() -> bool:
-    """Check if auto-compaction is enabled (matches claude-code's feature gate).
-
-    Can be disabled via env: MINICLAUDE_DISABLE_AUTO_COMPACT=1
-    """
     import os
     return os.environ.get("MINICLAUDE_DISABLE_AUTO_COMPACT", "").lower() not in ("1", "true", "yes")
 
@@ -162,18 +90,11 @@ def should_auto_compact(
     max_tokens: int,
     consecutive_failures: int = 0,
 ) -> bool:
-    """Check if auto-compaction should run BEFORE the next API call.
-
-    Matches claude-code's isAutoCompactEnabled / token threshold check.
-    Runs when estimated tokens + turn growth > effective context window.
-    """
     if consecutive_failures >= MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES:
-        return False  # Circuit breaker
-
+        return False
     effective_window = get_effective_context_window_size(model, max_tokens)
     current = estimate_tokens(messages)
     turn_growth = max_tokens + TOOL_RESULT_GROWTH_ESTIMATE
-
     return (current + turn_growth) > effective_window
 
 
@@ -195,11 +116,8 @@ class EngineState:
 class Engine:
     """Core agent engine — translated from claude-code's query.ts queryLoop().
 
-    Key differences from previous version:
-    - Auto-compact BEFORE API call (token-threshold based)
-    - Microcompact each iteration (zero-cost truncation)
-    - Proper state tracking across iterations
-    - Circuit breaker for compaction failures
+    Uses streaming tool execution: tools start running as soon as their
+    blocks arrive in the model stream, not after the full response.
     """
 
     def __init__(
@@ -236,15 +154,8 @@ class Engine:
         self._messages: list[dict[str, Any]] = []
         self._aborted = False
         self._turn_start_len: int | None = None
-        self._active_stream = None
 
-        # -- retained from original -----------------------------------------
-        self._last_tool_calls: list[tuple[str, str]] = []
-        self._consecutive_errors = 0
-        self.MAX_CONSECUTIVE_ERRORS = 5
-        self._read_results: dict[str, dict[str, int]] = {}
-        self.MAX_STALE_READS = 3
-        self._consecutive_strikes = 0
+        # Legacy compat
         self._cached_prompt: str | None = None
 
     # -- permission property ------------------------------------------------
@@ -307,11 +218,6 @@ class Engine:
 
     def abort(self) -> None:
         self._aborted = True
-        if self._active_stream is not None:
-            try:
-                self._active_stream.close()
-            except Exception:
-                pass
 
     def cancel_turn(self) -> None:
         if self._turn_start_len is not None:
@@ -330,7 +236,7 @@ class Engine:
                 pass
 
     # ------------------------------------------------------------------
-    # Legacy API
+    # Legacy API — run() is used by sub-agents and REPL
     # ------------------------------------------------------------------
 
     def run(self, user_input: str, quiet: bool = False) -> str | None:
@@ -341,13 +247,19 @@ class Engine:
         self._permissions.reset_for_turn()
         last_text = ""
         has_output = False
+
         for event in self.submit(user_input):
             ev_type = event[0]
             if ev_type == "text":
-                last_text = event[1]
+                # Reset when tool calls occur between assistant responses
+                # so last_text always reflects the CURRENT assistant's text
+                last_text += event[1]
                 if not quiet:
                     print(event[1], end="", flush=True)
                 has_output = True
+            elif ev_type == "tool_call":
+                # Next text event will be from a new assistant response
+                last_text = ""
             elif ev_type == "error":
                 if not quiet:
                     print(term.error(event[1]))
@@ -361,7 +273,6 @@ class Engine:
         if has_output and last_text and not quiet:
             print()
 
-        # ── Post-turn: run memory extraction sub-agent ──
         # Post-turn memory extraction (only for main agent, not sub-agents)
         if not quiet:
             self._extract_memories()
@@ -369,7 +280,7 @@ class Engine:
         return last_text if last_text else None
 
     def _extract_memories(self) -> None:
-        """Run memory extraction sub-agent in background (matches claude-code)."""
+        """Run memory extraction sub-agent in background."""
         try:
             from src.features.memory import run_memory_extraction
             mem_dir = getattr(self, '_memory_dir', None)
@@ -383,7 +294,7 @@ class Engine:
                 model=self._model,
             )
         except Exception:
-            pass  # Non-essential — don't break the REPL
+            pass
 
     def resume(self, history: list[dict[str, Any]]) -> None:
         for msg in history:
@@ -391,14 +302,12 @@ class Engine:
             role = msg.get("role", "")
             content = msg.get("content", "")
 
-            # New _type-based format from load_session_messages
             if msg_type in ("user_input", "tool_result", "permission_denied", "error"):
                 self._messages.append(
                     self._provider.make_user_message(content)
                 )
             elif msg_type in ("assistant_text", "tool_call"):
                 self._messages.append({"role": "assistant", "content": content})
-            # Old role-based format (backward compat)
             elif role == "user":
                 self._messages.append(
                     self._provider.make_user_message(content)
@@ -415,31 +324,11 @@ class Engine:
         print(term.info("[session cleared]"))
 
     # ═════════════════════════════════════════════════════════════════════
-    # MAIN LOOP — translated from claude-code queryLoop() line-by-line
+    # MAIN LOOP — streaming tool execution
     # ═════════════════════════════════════════════════════════════════════
-    #
-    # Claude-code's queryLoop has this structure:
-    #   while(true):
-    #     microcompact  → zero-cost truncation
-    #     autocompact   → LLM summarization if over token threshold
-    #     streaming API call
-    #     execute tools  → runTools(partitionToolCalls)
-    #     post-processing → attachments, memory, commands
-    #     state = { messages: messagesForQuery ++ assistant ++ toolResults }
-    #
-    # Key difference from our previous version: state is rebuilt immutably
-    # at each continue point, not mutated in-place. This matches claude-code's
-    # pattern where `state = next` at the end of each iteration.
 
     def submit(self, user_input: str) -> Iterator[tuple]:
         """Submit user message; yield events until turn completes.
-
-        Translated from claude-code's queryLoop():
-        - Microcompact before API call (zero-cost truncation)
-        - Auto-compact before API call (token-threshold LLM summary)
-        - Streaming API call with retry
-        - PartitionToolCalls + parallel read-only execution
-        - State rebuild at continue point (immutable pattern)
 
         Yields:
           ("text", str)               — streamed text chunk
@@ -455,28 +344,19 @@ class Engine:
         self._persist(self._messages[-1])
 
         try:
-            # ─── State (matches claude-code's `let state: State`) ─────────
             turn_count = 0
             compact_failures = 0
-            compact_tracking: dict | None = None  # matches autoCompactTracking
-            has_attempted_reactive = False
+            compact_tracking: dict | None = None
 
             while True:
                 turn_count += 1
                 if self._aborted:
                     raise AbortedError()
 
-                # ═══════════════════════════════════════════════════════════
-                # STEP 1: Microcompact (matches claude-code line 587-610)
-                # Zero-cost truncation of old tool results. Runs EVERY iteration.
-                # ═══════════════════════════════════════════════════════════
+                # ── STEP 1: Microcompact ──────────────────────────────
                 self._messages = micro_compact(self._messages, keep_recent=12)
 
-                # ═══════════════════════════════════════════════════════════
-                # STEP 2: Auto-compact (matches claude-code line 638-728)
-                # LLM summarization if token threshold exceeded. Runs BEFORE
-                # the API call so the model sees the compacted view.
-                # ═══════════════════════════════════════════════════════════
+                # ── STEP 2: Auto-compact ──────────────────────────────
                 if isAutoCompactEnabled() and should_auto_compact(
                     self._messages, self._model, self._max_tokens, compact_failures,
                 ):
@@ -505,312 +385,136 @@ class Engine:
 
                     self._cached_prompt = None
 
-                # Update compact turn counter (matches claude-code line 1803-1813)
                 if compact_tracking and compact_tracking.get("compacted"):
                     compact_tracking["turn_counter"] += 1
 
-                # ═══════════════════════════════════════════════════════════
-                # STEP 3: Turn limit check (matches claude-code line 2018-2026)
-                # Warn at MAX_TOOL_ROUNDS, force-stop at 5x
-                # ═══════════════════════════════════════════════════════════
+                # ── STEP 3: Turn limit check ──────────────────────────
                 if turn_count == MAX_TOOL_ROUNDS:
                     print(term.turn_warning(turn_count))
                 if turn_count >= MAX_TOOL_ROUNDS * 5:
                     print(term.turn_limit(turn_count))
                     break
 
-                # ═══════════════════════════════════════════════════════════
-                # STEP 4: API call with retry (matches claude-code line 878-935)
-                # Streaming model response. Retry on transient errors.
-                # ═══════════════════════════════════════════════════════════
-                assistant_messages: list[dict] = []  # one per API call in this batch
-                tool_uses = []
-                final = None
+                # ── STEP 4: Streaming API call with retry ─────────────
+                tools = self._tools_for_provider()
+                executor = StreamingToolExecutor(
+                    tools=self._tools,
+                    permission_checker=self._permissions,
+                    logger=self._logger,
+                )
+                assistant_message: dict[str, Any] = {}
+                full_text = ""
+                tool_uses_seen = False
 
-                for attempt in range(_MAX_RETRIES):
-                    try:
-                        tools = self._tools_for_provider()
-                        response = self._provider.send_message(
-                            system_prompt=self._system_prompt,
-                            messages=self._messages,
-                            tools=tools,
-                            max_tokens=self._max_tokens,
-                        )
-                        final = response
-                        if response.text:
-                            yield ("text", response.text)
-                            yield ("waiting",)
-                        for tc in response.tool_calls:
-                            tool_uses.append(tc)
-                        break
-                    except AbortedError:
-                        raise
-                    except Exception as e:
-                        err_msg = str(e)
-                        if _is_auth_error(e):
-                            self._messages.pop()
-                            yield ("error", f"Authentication failed: {err_msg}")
-                            return
-                        if _CONTEXT_OVERFLOW_RE.search(err_msg):
-                            reduced = self._max_tokens // 2
-                            if reduced >= 1024:
-                                self._max_tokens = reduced
-                                yield ("error", f"Context overflow → max_tokens={reduced}, retrying")
-                                continue
-                            self._messages.pop()
-                            yield ("error", f"Context overflow, cannot reduce further: {err_msg}")
-                            return
-                        if _is_retryable(err_msg, e):
-                            if attempt < _MAX_RETRIES - 1:
-                                wait = _compute_retry_delay(attempt, _parse_retry_after(e))
-                                yield ("error", f"API error, retrying in {wait:.1f}s...")
-                                time.sleep(wait)
-                                continue
-                            self._messages.pop()
-                            yield ("error", f"API error after {_MAX_RETRIES} retries: {err_msg}")
-                            return
-                        self._messages.pop()
-                        yield ("error", f"API error: {err_msg}")
-                        return
+                for stream_event in call_model_with_retry(
+                    provider=self._provider,
+                    system_prompt=self._system_prompt,
+                    messages=self._messages,
+                    tools=tools,
+                    max_tokens=self._max_tokens,
+                ):
+                    if isinstance(stream_event, TextDelta):
+                        full_text += stream_event.text
+                        yield ("text", stream_event.text)
 
-                if final is None:
-                    self._messages.pop()
+                    elif isinstance(stream_event, ToolUseBlock):
+                        tool_uses_seen = True
+                        tool = self._tools.get(stream_event.name)
+                        activity = tool.get_activity_description(**stream_event.arguments) if tool else None
+                        yield ("tool_call", stream_event.name, stream_event.arguments, activity)
+                        print(term.tool_call(stream_event.name, self._fmt_params(stream_event.arguments)))
+                        if self._logger:
+                            self._logger.tool_use(stream_event.name, stream_event.arguments)
+
+                        # Feed to streaming executor — may start immediately
+                        executor.add_tool(stream_event)
+
+                        # Poll for any completed results
+                        tid = stream_event.id
+                        for result_id, name, args, content in executor.get_completed_results():
+                            if self._logger:
+                                self._logger.tool_result(name, content)
+                            yield self._show_tool_result_tu(name, args, content)
+
+                    elif isinstance(stream_event, StreamEnd):
+                        assistant_message = stream_event.assistant_message
+                        if stream_event.text and not tool_uses_seen:
+                            full_text = stream_event.text
+
+                # Signal end of text stream
+                if full_text:
+                    yield ("waiting",)
+
+                # ── Drain remaining tool results ──────────────────────
+                for result_id, name, args, content in executor.get_remaining_results():
+                    if self._logger:
+                        self._logger.tool_result(name, content)
+                    yield self._show_tool_result_tu(name, args, content)
+
+                # Check for abort after tool execution
+                if self._aborted:
+                    raise AbortedError()
+
+                # ── Build tool result items for message history ───────
+                all_results = executor.get_all_results()
+
+                # Abort on too many consecutive errors
+                if executor.consecutive_errors >= 5:
+                    yield ("error", f"Aborting: 5 consecutive tool failures")
+                    self._flush_tool_results(all_results)
                     return
 
-                # Store assistant message (matches claude-code: assistantMessages.push)
-                self._messages.append(final.assistant_message)
-                assistant_messages.append(final.assistant_message)
-                self._persist(self._messages[-1])
-                if self._logger and final.text:
-                    self._logger.assistant_text(final.text)
+                # Store assistant message
+                if assistant_message:
+                    self._messages.append(assistant_message)
+                    self._persist(self._messages[-1])
+                    if self._logger and full_text:
+                        self._logger.assistant_text(full_text)
 
-                # No tool calls → terminal (matches claude-code: reason='completed')
-                if not tool_uses:
+                # No tool calls → terminal
+                if not all_results:
                     break
-
-                # ═══════════════════════════════════════════════════════════
-                # STEP 5: Execute tools (matches claude-code line 1639-1684)
-                # partitionToolCalls → concurrent+sequential batches
-                # ═══════════════════════════════════════════════════════════
-                tool_result_msgs: list[dict] = []  # tool result messages
-                tool_result_items: list[tuple[str, str, str]] = []
-
-                # Partition: consecutive read-only tools → parallel batch
-                # (matches claude-code's partitionToolCalls)
-                batches: list[tuple[bool, list[Any]]] = []
-                for tu in tool_uses:
-                    t = self._tools.get(tu.name)
-                    is_concurrent = t is not None and t.is_read_only()
-                    if batches and batches[-1][0] == is_concurrent and is_concurrent:
-                        batches[-1][1].append(tu)
-                    else:
-                        batches.append((is_concurrent, [tu]))
-
-                for is_concurrent, batch in batches:
-                    if self._aborted:
-                        raise AbortedError()
-
-                    if is_concurrent and len(batch) > 1:
-                        # ── runToolsConcurrently (read-only batch) ──
-                        approved, denied, events = self._check_batch_permissions(batch)
-                        for ev in events:
-                            yield ev
-                        for tu, tool, act in approved:
-                            yield ("tool_executing", tu.name, tu.arguments, act)
-
-                        executed = {}
-                        if approved:
-                            with ThreadPoolExecutor(max_workers=min(len(approved), 10)) as pool:
-                                futures = {pool.submit(self._execute_tool, tu): tu for tu, _, _ in approved}
-                                for f in as_completed(futures):
-                                    tu = futures[f]
-                                    try:
-                                        executed[tu.id] = f.result()
-                                    except Exception as exc:
-                                        executed[tu.id] = f"Tool execution error: {exc}"
-
-                        for tu in batch:
-                            if tu.id in denied:
-                                if tu.name == "run_shell" and _is_self_destructive_cmd(tu.arguments.get("command", "")):
-                                    result = "BLOCKED: would kill this agent. Kill other PIDs only."
-                                else:
-                                    result = "Permission denied."
-                            else:
-                                result = executed.get(tu.id, "No result")
-                            yield self._show_tool_result(tu, result)
-                            tool_result_items.append((tu.id, tu.name, result))
-                    else:
-                        # ── runToolsSerially (non-read-only) ──
-                        for tu in batch:
-                            if self._aborted:
-                                raise AbortedError()
-                            tn, ti = tu.name, tu.arguments
-                            tool = self._tools.get(tn)
-                            act = tool.get_activity_description(**ti) if tool else None
-                            yield ("tool_call", tn, ti, act)
-                            print(term.tool_call(tn, self._fmt_params(ti)))
-                            if self._logger:
-                                self._logger.tool_use(tn, ti)
-
-                            # Handle unknown tools gracefully
-                            if tool is None:
-                                result = self._handle_unknown_tool(tu)
-                                print(term.error(f"Unknown tool: {tn!r}"))
-                            elif self._check_stuck(tu):
-                                result = f"WARNING: {tu.name} called 3x with same args."
-                            elif self._permissions.check(tool, ti) == "deny":
-                                # Check if this was a self-destructive command
-                                if tn == "run_shell" and _is_self_destructive_cmd(ti.get("command", "")):
-                                    result = "BLOCKED: would kill this agent's own PID. Kill other PIDs only."
-                                else:
-                                    result = "Permission denied."
-                                print(term.permission_denied(f"Denied: {tn}"))
-                            else:
-                                yield ("tool_executing", tn, ti, act)
-                                result = self._execute_tool(tu)
-
-                            yield self._show_tool_result(tu, result)
-                            tool_result_items.append((tu.id, tu.name, result))
-
-                            # Consecutive error abort
-                            if self._consecutive_errors >= self.MAX_CONSECUTIVE_ERRORS:
-                                self._consecutive_errors = 0
-                                yield ("error", f"Aborting: {self.MAX_CONSECUTIVE_ERRORS} consecutive tool failures")
-                                self._flush_tool_results(tool_result_items)
-                                return
 
                 print()
 
-                # Reset stuck-detection counter
-                if not any("Stuck" in (r[2] if isinstance(r, tuple) else "") for r in tool_result_items):
-                    self._consecutive_strikes = 0
+                # ── STEP 5: Flush tool results to message list ────────
+                self._flush_tool_results(all_results)
 
-                # ═══════════════════════════════════════════════════════════
-                # STEP 6: Flush tool results to message list
-                # (matches claude-code: normalizeMessagesForAPI + push to toolResults)
-                # ═══════════════════════════════════════════════════════════
-                self._flush_tool_results(tool_result_items)
-
-                # All denied + no text → stop (matches claude-code finish-reason)
-                if tool_result_items and all(
-                    (r[2] if isinstance(r, tuple) else "") == "Permission denied."
-                    for r in tool_result_items
-                ) and not (hasattr(final, 'text') and final.text):
+                # All denied + no text → stop
+                if executor.all_denied and not full_text:
                     yield ("text", "All tool calls denied by permission system.")
                     break
-
-                # ═══════════════════════════════════════════════════════════
-                # CONTINUE: state rebuilt for next iteration
-                # (matches claude-code line 2029-2041)
-                # state = { messages: messagesForQuery ++ assistant ++ toolResults }
-                # ═══════════════════════════════════════════════════════════
 
         except AbortedError:
             self.cancel_turn()
             raise
         except Exception:
-            # Safety net — catch ALL unhandled exceptions so the process
-            # never crashes. Log the traceback and recover gracefully.
             import traceback
             traceback.print_exc()
             self.cancel_turn()
             yield ("error", "Internal error — turn cancelled. Please try again.")
 
-    # ─── Tool execution helpers (extracted from submit) ──────────────────
+    # ------------------------------------------------------------------
+    # Tool result display
+    # ------------------------------------------------------------------
 
-    def _check_batch_permissions(self, batch: list) -> tuple[list, dict, list]:
-        """Check permissions for a batch. Returns (approved, denied, tool_call_events)."""
-        approved = []
-        denied = {}
-        events = []
-        for tu in batch:
-            tn, ti = tu.name, tu.arguments
-            tool = self._tools.get(tn)
-            act = tool.get_activity_description(**ti) if tool else None
-            events.append(("tool_call", tn, ti, act))
-            print(term.tool_call(tn, self._fmt_params(ti)))
-            if self._logger:
-                self._logger.tool_use(tn, ti)
-            if tool is None:
-                denied[tu.id] = tn
-                print(term.error(f"Unknown tool: {tn!r}"))
-            elif self._permissions.check(tool, ti) == "deny":
-                denied[tu.id] = tn
-                print(term.permission_denied(f"Denied: {tn}"))
-            else:
-                approved.append((tu, tool, act))
-        return approved, denied, events
-
-    def _handle_unknown_tool(self, tu) -> str:
-        """Return a helpful error when the model calls a non-existent tool."""
-        return (
-            f"ERROR: Unknown tool '{tu.name}'. "
-            f"Available tools: {', '.join(sorted(self._tools.keys()))}. "
-            f"Use one of the available tools instead."
-        )
-
-    def _check_stuck(self, tu) -> bool:
-        """Check if this tool call is stuck (same name+args 3x in last 5 calls)."""
-        call_key = (tu.name, json.dumps(tu.arguments, sort_keys=True))
-        self._last_tool_calls.append(call_key)
-        if self._last_tool_calls[-5:].count(call_key) >= 3:
-            self._last_tool_calls.clear()
-            return True
-        return False
-
-    def _show_tool_result(self, tu, result: str) -> tuple:
-        """Show tool result in terminal and return event tuple to yield."""
-        # Use claude-code style: ✓ for success, ✗ for errors
+    def _show_tool_result_tu(self, name: str, args: dict[str, Any], result: str) -> tuple:
+        """Show tool result in terminal and return event tuple."""
         is_err = "Error" in result or "error" in result or "denied" in result.lower()
         if is_err:
             print(term.tool_error(self._truncate(result, 200)))
         else:
             print(term.tool_done(self._truncate(result, 200)))
-        if self._logger:
-            self._logger.tool_result(tu.name, result)
-        return ("tool_result", tu.name, tu.arguments, result)
+        return ("tool_result", name, args, result)
 
-    def _flush_tool_results(self, items: list[tuple[str, str, str]]) -> None:
+    def _flush_tool_results(self, items: list[tuple[str, str, dict[str, Any], str]]) -> None:
         """Format tool results via provider and append to message list."""
-        provider_msgs = self._provider.make_tool_result_messages(items)
+        # Convert to legacy (id, name, content) format for provider
+        legacy = [(tid, name, content) for tid, name, _args, content in items]
+        provider_msgs = self._provider.make_tool_result_messages(legacy)
         self._messages.extend(provider_msgs)
         for msg in provider_msgs:
             self._persist(msg)
-
-    # ------------------------------------------------------------------
-    # Tool execution
-    # ------------------------------------------------------------------
-
-    def _execute_tool(self, tool_use: Any) -> str:
-        tool = self._tools.get(tool_use.name)
-        if tool is None:
-            self._consecutive_errors += 1
-            return f"Unknown tool: {tool_use.name}"
-
-        try:
-            result = tool.execute(**tool_use.arguments)
-            self._consecutive_errors = 0
-
-            # Stale-read detection
-            if tool_use.name in ("read_file", "search_files", "git_diff"):
-                content = result.content if hasattr(result, 'content') else str(result)
-                h = hashlib.sha256(content[:2000].encode()).hexdigest()
-                counts = self._read_results.setdefault(tool_use.name, {})
-                counts[h] = counts.get(h, 0) + 1
-                if counts[h] >= self.MAX_STALE_READS:
-                    return (
-                        f"WARNING: {tool_use.name} returned same content "
-                        f"{self.MAX_STALE_READS}x. Stop reading.\n\n{content}"
-                    )
-
-            return result.content if hasattr(result, 'content') else str(result)
-
-        except Exception as exc:
-            self._consecutive_errors += 1
-            error_msg = f"Tool error: {exc}"
-            if self._logger:
-                self._logger.error(error_msg)
-            return error_msg
 
     # ------------------------------------------------------------------
     # Helpers

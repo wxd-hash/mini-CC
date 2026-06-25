@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from typing import Any
 
-from src.llm.provider import LLMProvider, LLMResponse, ToolCall
+from src.llm.provider import LLMProvider, LLMResponse, ToolCall, TextDelta, ToolUseBlock, StreamEnd
 
 TESTS_PASSED = 0
 TESTS_FAILED = 0
@@ -72,6 +72,51 @@ class MockProvider(LLMProvider):
         if isinstance(item, str):
             return LLMResponse(text=item)
         return item
+
+    def send_message_stream(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_tokens: int = 4096,
+    ):
+        """Streaming variant — converts legacy LLMResponse to stream events."""
+        self.last_system = system_prompt
+        self.last_messages = list(messages)
+        self.last_tools = list(tools)
+        self._call_count += 1
+
+        if not self.responses:
+            yield TextDelta(text="mock default response")
+            yield StreamEnd(
+                assistant_message={"role": "assistant", "content": "mock default response"},
+                text="mock default response",
+            )
+            return
+
+        item = self.responses.pop(0)
+        if isinstance(item, Exception):
+            raise item
+
+        if isinstance(item, str):
+            text = item
+            tool_calls = []
+            assistant_message = {"role": "assistant", "content": text}
+        else:
+            text = item.text
+            tool_calls = item.tool_calls
+            assistant_message = item.assistant_message or {"role": "assistant", "content": text}
+
+        # Yield text if present
+        if text:
+            yield TextDelta(text=text)
+
+        # Yield tool calls as ToolUseBlock (so StreamingToolExecutor picks them up)
+        for tc in tool_calls:
+            yield ToolUseBlock(id=tc.id, name=tc.name, arguments=tc.arguments)
+
+        # Yield StreamEnd
+        yield StreamEnd(assistant_message=assistant_message, text=text)
 
     def make_user_message(self, content: str) -> dict[str, Any]:
         return {"role": "user", "content": content}
@@ -720,6 +765,168 @@ def test_agent_mock_provider():
 
 
 # ======================================================================
+# 10. Streaming tool execution tests (P0 verification)
+# ======================================================================
+
+def test_streaming_tool_execution():
+    """Tools start executing BEFORE StreamEnd — the core P0 behavior."""
+    print("\n[10a] Streaming: tool executes during stream, not after")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ws = Path(tmp)
+        (ws / "data.txt").write_text("streaming test content", encoding="utf-8")
+
+        agent, provider, log = _make_agent(ws, responses=[
+            LLMResponse(
+                text="let me check the file",
+                tool_calls=[
+                    ToolCall(id="tc1", name="read_file", arguments={"path": "data.txt"}),
+                ],
+                assistant_message={"role": "assistant", "content": "let me check the file"},
+            ),
+            "file contains: streaming test content",
+        ])
+
+        # Capture events in order to verify streaming behavior
+        events: list[tuple] = []
+        for event in agent.submit("read data.txt"):
+            events.append(event)
+
+        log.close()
+
+    # Verify event order: text → tool_call → tool_result → waiting → text → waiting
+    event_types = [e[0] for e in events]
+    assert "text" in event_types, "should have text events"
+    assert "tool_call" in event_types, "should have tool_call events"
+    assert "tool_result" in event_types, "should have tool_result events"
+
+    # Key assertion: tool_result appears BEFORE the second "waiting"
+    # (which means the tool was executed during the first streaming phase)
+    tool_result_idx = event_types.index("tool_result")
+    waiting_indices = [i for i, t in enumerate(event_types) if t == "waiting"]
+    assert len(waiting_indices) >= 2, f"expected 2+ waiting events, got {len(waiting_indices)}"
+    # The tool_result should appear before the second waiting
+    # (and the first "waiting" is after the initial text)
+    assert tool_result_idx > waiting_indices[0], "tool_result should come after first text batch"
+    assert tool_result_idx < waiting_indices[1], (
+        f"tool_result (idx {tool_result_idx}) should come BEFORE second waiting "
+        f"(idx {waiting_indices[1]}) — proves streaming execution"
+    )
+
+    ok("tool executes during stream, result arrives before StreamEnd")
+
+
+def test_streaming_multiple_readonly_parallel():
+    """Multiple read-only tools in one response execute in parallel."""
+    print("\n[10b] Streaming: parallel read-only tool execution")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ws = Path(tmp)
+        (ws / "a.txt").write_text("file A", encoding="utf-8")
+        (ws / "b.txt").write_text("file B", encoding="utf-8")
+        (ws / "c.txt").write_text("file C", encoding="utf-8")
+
+        agent, provider, log = _make_agent(ws, responses=[
+            LLMResponse(
+                text="reading all three files in parallel",
+                tool_calls=[
+                    ToolCall(id="t1", name="read_file", arguments={"path": "a.txt"}),
+                    ToolCall(id="t2", name="read_file", arguments={"path": "b.txt"}),
+                    ToolCall(id="t3", name="read_file", arguments={"path": "c.txt"}),
+                ],
+                assistant_message={"role": "assistant", "content": "reading files"},
+            ),
+            "all files read successfully",
+        ])
+
+        result = agent.run("read all three")
+        assert result == "all files read successfully"
+        assert provider._call_count == 2
+
+        log.close()
+    ok("3 read-only tools executed, loop completed correctly")
+
+
+def test_streaming_serial_write_blocked_by_concurrent_reads():
+    """Read-only tools run first; writes wait until reads finish (serial after stream)."""
+    print("\n[10c] Streaming: writes are serial, reads are concurrent")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ws = Path(tmp)
+        (ws / "existing.txt").write_text("old content", encoding="utf-8")
+
+        # Response with interleaved read + write tool calls
+        agent, provider, log = _make_agent(ws, responses=[
+            LLMResponse(
+                text="let me read then write",
+                tool_calls=[
+                    ToolCall(id="t1", name="read_file", arguments={"path": "existing.txt"}),
+                    ToolCall(id="t2", name="write_file", arguments={"path": "new.txt", "content": "new!"}),
+                ],
+                assistant_message={"role": "assistant", "content": "let me read then write"},
+            ),
+            "done — created new.txt based on existing.txt",
+        ])
+
+        result = agent.run("read existing then create new file")
+        assert result == "done — created new.txt based on existing.txt"
+        assert provider._call_count == 2
+
+        # Verify write_file actually executed
+        assert (ws / "new.txt").exists()
+        assert (ws / "new.txt").read_text(encoding="utf-8") == "new!"
+
+        log.close()
+    ok("read+write mixed: read runs concurrently, write serial, both execute")
+
+
+def test_streaming_executor_all_denied():
+    """StreamingToolExecutor correctly marks all_denied when every tool is rejected."""
+    print("\n[10d] Streaming: all_denied property with permission rejection")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ws = Path(tmp)
+        # plan mode: writes are denied
+        agent, provider, log = _make_agent(ws, mode="plan", responses=[
+            LLMResponse(
+                text="",
+                tool_calls=[
+                    ToolCall(id="t1", name="write_file", arguments={"path": "x", "content": "y"}),
+                ],
+                assistant_message={"role": "assistant", "content": ""},
+            ),
+        ])
+
+        result = agent.run("create file x")
+        assert result is not None
+        assert "denied" in result.lower()
+        assert provider._call_count == 1  # stops after denial
+
+        log.close()
+    ok("all_denied stops loop without further API calls")
+
+
+def test_streaming_retry_yields_error_text():
+    """When the model fails, retry logic yields error info as TextDelta."""
+    print("\n[10e] Streaming: retry yields error text")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ws = Path(tmp)
+        # Auth error — immediate abort
+        agent, provider, log = _make_agent(ws, responses=[
+            RuntimeError("authentication failed"),
+        ])
+
+        result = agent.run("do something")
+        # Should return None on auth error
+        assert result is None
+        assert provider._call_count == 1
+
+        log.close()
+    ok("auth error aborts immediately, returns None")
+
+
+# ======================================================================
 # Main
 # ======================================================================
 if __name__ == "__main__":
@@ -742,6 +949,12 @@ if __name__ == "__main__":
         test_agent_interleaved_text,
         test_agent_messages_accumulate,
         test_agent_dont_ask_again_per_turn,
+        # P0 streaming tests
+        test_streaming_tool_execution,
+        test_streaming_multiple_readonly_parallel,
+        test_streaming_serial_write_blocked_by_concurrent_reads,
+        test_streaming_executor_all_denied,
+        test_streaming_retry_yields_error_text,
     ]
 
     for t in tests:

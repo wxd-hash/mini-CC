@@ -1,10 +1,41 @@
-"""Abstract LLM provider interface."""
+"""Abstract LLM provider interface and stream event types."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Iterator
+
+
+# ---------------------------------------------------------------------------
+# Stream event types (defined here to avoid circular imports with src.agent)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TextDelta:
+    """Incremental text chunk from the model stream."""
+    text: str
+
+
+@dataclass(frozen=True)
+class ToolUseBlock:
+    """A completed tool-use block — ready to execute."""
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class StreamEnd:
+    """Final event from a streaming API call."""
+    assistant_message: dict[str, Any]
+    text: str = ""  # accumulated full text
+
+
+# ---------------------------------------------------------------------------
+# Legacy types
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -39,7 +70,22 @@ class LLMProvider(ABC):
         tools: list[dict[str, Any]],
         max_tokens: int = 4096,
     ) -> LLMResponse:
-        ...
+        """Send a message and return the complete response (legacy API)."""
+
+    @abstractmethod
+    def send_message_stream(
+        self,
+        system_prompt: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        max_tokens: int = 4096,
+    ) -> Iterator[TextDelta | ToolUseBlock | StreamEnd]:
+        """Send a message and yield events as they arrive.
+
+        Yields TextDelta for incremental text, ToolUseBlock when a tool-call
+        block completes (ready to execute), and a final StreamEnd carrying
+        the assistant_message for history.
+        """
 
     @abstractmethod
     def make_user_message(self, content: str) -> dict[str, Any]:

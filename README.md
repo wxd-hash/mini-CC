@@ -7,6 +7,7 @@
 ## 核心特性
 
 - **Agent 工具循环** — while True 状态机模式，无硬性轮次上限
+- **流式工具执行** — 模型还在输出时，只读工具就开始后台运行；文本流和工具执行并行重叠，大幅降低感知延迟
 - **并行工具执行** — 只读工具（read/search/list）ThreadPoolExecutor 并行批处理，写入工具串行
 - **自动压缩** — token 阈值触发（非消息数），circuit breaker 防重复压缩
 - **重试机制** — 指数退避 + jitter，最多 10 次重试，自动处理限流/超时/上下文溢出
@@ -255,7 +256,9 @@ mini-claude-code/
 │   ├── repl.py                     # 交互 REPL 循环
 │   ├── commands.py                 # 斜杠命令 + 恢复逻辑
 │   ├── agent/
-│   │   └── loop.py                 # Engine — while True 主循环
+│   │   ├── loop.py                 # Engine — while True 主循环
+│   │   ├── retry.py                # API 重试策略（指数退避 + jitter）
+│   │   └── tool_executor.py        # StreamingToolExecutor — 流式工具编排
 │   ├── llm/
 │   │   ├── provider.py             # LLMProvider 抽象
 │   │   ├── anthropic_provider.py   # Anthropic（流式）
@@ -265,7 +268,8 @@ mini-claude-code/
 │   │   ├── registry.py             # 工具注册表
 │   │   ├── file_tools.py           # ReadFile, WriteFile, FileEditTool, ListFiles, SearchFiles
 │   │   ├── shell_tool.py           # RunShell（后台/超时/exit code 语义）
-│   │   └── git_tools.py            # GitDiff
+│   │   ├── git_tools.py            # GitDiff
+│   │   └── safety.py               # StuckDetector + StaleReadDetector
 │   ├── features/
 │   │   ├── memory.py               # KAIROS 记忆系统
 │   │   ├── skills.py               # Skills 发现和注册
@@ -284,14 +288,20 @@ mini-claude-code/
 ## 快速测试
 
 ```bash
-# 18 个单元测试
+# 23 个单元测试（无需 API key）
 python -m pytest test_all.py -v
+
+# 8 个集成测试（覆盖流式执行、多轮工作流、权限边界）
+python tests/integration/test_project_workflow.py
 ```
 
 ## 架构参考
 
 本项目的核心循环、压缩、权限管线基于 Claude Code（Anthropic 官方 CLI）的源码翻译：
 - `agent/loop.py` ← `src/query.ts` queryLoop()
+- `agent/retry.py` ← `src/services/api/withRetry.ts`
+- `agent/tool_executor.py` ← `src/services/tools/StreamingToolExecutor.ts`
+- `tools/safety.py` ← 内联于 query.ts 的 stuck/stale 检测
 - 自动压缩 ← `src/services/compact/autoCompact.ts`
 - 终端样式 ← Claude Code 的 ↳ 输出风格
 - 工具协议 ← `src/Tool.ts`
