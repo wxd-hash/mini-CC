@@ -264,18 +264,19 @@ class Engine:
             _buf.clear()
             return full
 
-        # Show thinking indicator while waiting for API response
+        # Start animated spinner while waiting for API response
+        _spinner: term.Spinner | None = None
         if not quiet:
-            print(term.thinking(), end="", flush=True)
+            _spinner = term.Spinner()
+            _spinner.start()
 
         for event in self.submit(user_input):
-            # Clear thinking indicator on first event
+            # Stop spinner on first event (text, tool, or error)
             if _first_event:
                 _first_event = False
-                if not quiet:
-                    import sys as _sys
-                    _sys.stdout.write("\r\033[K")  # clear current line
-                    _sys.stdout.flush()
+                if _spinner is not None:
+                    _spinner.stop()
+                    _spinner = None
             ev_type = event[0]
             if ev_type == "text":
                 chunk = event[1]

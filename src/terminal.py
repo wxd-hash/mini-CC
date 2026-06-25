@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import random
 import sys
+import threading
+import time
 
 import colorama
 
@@ -46,35 +48,71 @@ def set_no_color() -> None:
 # Spinner — animated progress indicator (matches claude-code)
 # ---------------------------------------------------------------------------
 
-_SPINNER_FRAMES = ["·", "✢", "✱", "✶", "✻", "✽"]  # · ✢ ✱ ✶ ✻ ✽
+_SPINNER_FRAMES = ["·", "✢", "✱", "✶", "✻", "✽"]
+_SPINNER_FRAME_INTERVAL = 0.12  # ~8 fps, matches claude-code
+_SHOW_TIMER_AFTER = 5  # show elapsed time after 5s
 
 _SPINNER_VERBS = [
-    "思考中", "读取中", "分析中", "处理中", "计算中", "检索中",
-    "编写中", "检查中", "编译中", "运行中", "加载中", "解析中",
+    "思考中", "分析中", "检索中", "计算中", "处理中",
+    "推演中", "琢磨中", "构思中", "规划中", "执行中",
+    "编译中", "调试中", "优化中", "评估中", "验证中",
+    "学习中", "推理中", "归纳中", "演绎中", "综合中",
 ]
 
 _MAX_RESULT_LINES = 3  # show at most this many lines
 
 
 class Spinner:
-    """Animated progress indicator for tool execution.
+    """Threaded animated spinner — runs while waiting for API response.
 
     Usage::
 
         spinner = Spinner()
-        while tool_running:
-            print(spinner.next(), end="", flush=True)
+        spinner.start()
+        ...  # blocking API call
+        spinner.stop()
     """
 
     def __init__(self) -> None:
-        self._frame = 0
-        self._verb = random.choice(_SPINNER_VERBS)
+        self._running = False
+        self._thread: threading.Thread | None = None
+        self._start_time = 0.0
+        self._verb = ""
+        self._frame_idx = 0
 
-    def next(self) -> str:
-        """Return the next spinner frame with reset escape for in-place refresh."""
-        frame_char = _SPINNER_FRAMES[self._frame % len(_SPINNER_FRAMES)]
-        self._frame += 1
-        return f"\r    {_DIM}  {frame_char}  {self._verb}{_RESET}"
+    @property
+    def elapsed(self) -> float:
+        if self._start_time == 0:
+            return 0
+        return time.monotonic() - self._start_time
+
+    def start(self) -> None:
+        self._running = True
+        self._start_time = time.monotonic()
+        self._verb = random.choice(_SPINNER_VERBS)
+        self._frame_idx = 0
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._running = False
+        if self._thread is not None:
+            self._thread.join(timeout=0.5)
+        # Clear the spinner line
+        sys.stdout.write(f"\r  {_DIM}✓  已用时 {self.elapsed:.0f}s{_RESET}\n")
+        sys.stdout.flush()
+
+    def _run(self) -> None:
+        while self._running:
+            elapsed = time.monotonic() - self._start_time
+            frame = _SPINNER_FRAMES[self._frame_idx % len(_SPINNER_FRAMES)]
+            self._frame_idx += 1
+
+            time_str = f"  ({elapsed:.0f}s)" if elapsed >= _SHOW_TIMER_AFTER else ""
+            line = f"\r  {_DIM}  {frame}  {self._verb}{time_str}{_RESET}"
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            time.sleep(_SPINNER_FRAME_INTERVAL)
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +221,7 @@ def error(text: str) -> str:
 
 
 def thinking() -> str:
-    """Thinking indicator shown while waiting for the first API response."""
+    """DEPRECATED: use Spinner.start() / Spinner.stop() instead."""
     return f"  {_DIM}思考中...{_RESET}"
 
 
