@@ -121,7 +121,7 @@ class Spinner:
 
 def tool_call(name: str, params: str) -> str:
     """Tool call header — matches claude-code '↳ ToolName(params)'."""
-    return f"\n  {_DIM}↳ {_CYAN}{name}{_RESET}{_DIM}({params}){_RESET}"
+    return f"  {_DIM}↳ {_CYAN}{name}{_RESET}{_DIM}({params}){_RESET}"
 
 
 def tool_running(name: str, params: str, activity: str = "") -> str:
