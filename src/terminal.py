@@ -397,6 +397,18 @@ def select_menu(
         sys.stdout.write("\033[?25h")
         sys.stdout.flush()
 
+    # Clear menu from screen after selection (bottom-to-top)
+    total_lines = 1 + len(options)
+    if title:
+        total_lines += 2
+    if footer:
+        total_lines += 2
+    for _ in range(total_lines):
+        sys.stdout.write("\033[A")   # cursor up one line
+        sys.stdout.write("\033[2K")  # clear entire line
+    sys.stdout.write(f"\033[{total_lines}B")  # cursor back down
+    sys.stdout.flush()
+
     return selected
 
 
