@@ -2,7 +2,7 @@
 
 ![mini cc--meow~](fig/a7c1b575-9457-46d5-a1f8-e8b1d8f77abc.png)
 
-基于 Claude Code 架构的轻量级终端编程助手。纯 Python 实现，零框架依赖。用自然语言和代码库对话——agent 会自主读取、写入、搜索、运行 shell 命令并修复 bug。
+基于 Claude Code 架构的轻量级终端编程助手，纯 Python 实现。用自然语言和代码库对话——agent 会自主读取、写入、搜索、运行 shell 命令并修复 bug。
 
 ## 核心特性
 
@@ -15,7 +15,7 @@
 - **流式输出** — 实时逐字显示，不用等完整生成
 - **双层权限系统** — 自杀防护（taskkill /IM python 永不允许）+ 高危命令检测 + 键盘菜单确认
 - **会话持久化** — SessionStore 自动保存，按 workspace 组织，支持 --resume 恢复
-- **双 LLM 后端** — Anthropic Claude + DeepSeek（OpenAI 兼容协议）
+- **双 LLM 后端** — DeepSeek + OpenAI 兼容协议
 - **系统提示** — 全中文，内置 Shell 防循环规则
 - **KAIROS 记忆** — 子 Agent 自动提取 + 独立文件存储 + frontmatter + MEMORY.md 索引
 - **Skills 系统** — 内建 /review, /commit, /test, /simplify 技能
@@ -34,21 +34,25 @@ pip install git+https://github.com/wxd-hash/mini-CC.git
 pip install --force-reinstall --no-cache-dir git+https://github.com/wxd-hash/mini-CC.git
 ```
 
-**设置 API key（二选一）：**
+**设置 API key：**
 
 ```bash
-# DeepSeek（默认）
-export DEEPSEEK_API_KEY="sk-你的key"                           # macOS / Linux
-[Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "sk-你的key", "User")  # Windows PowerShell
+# macOS / Linux
+export DEEPSEEK_API_KEY="sk-你的key"
 
-# Claude
-export ANTHROPIC_API_KEY="sk-ant-你的key"                      # macOS / Linux
-[Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY", "sk-ant-你的key", "User")  # Windows PowerShell
+# Windows PowerShell
+[Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "sk-你的key", "User")
 ```
 
-> **切换 provider**：`export MINICLAUDE_PROVIDER=anthropic`（或 `deepseek`）。默认 deepseek。
+> **指定模型**：
+> ```bash
+> # 环境变量（持久生效）
+> export MINICLAUDE_MODEL=deepseek-chat      # DeepSeek V3（默认）
+> export MINICLAUDE_MODEL=deepseek-reasoner  # DeepSeek R1
 >
-> **指定模型**：`export MINICLAUDE_MODEL=sonnet`（支持别名：sonnet / opus / haiku）
+> # 或启动参数（一次性）
+> minicc --model deepseek-reasoner
+> ```
 
 安装完成，任何目录直接敲 `minicc`：
 
@@ -110,8 +114,8 @@ python main.py
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--provider anthropic\|deepseek` | `deepseek` | LLM 提供商 |
-| `--model MODEL` | 默认模型 | 模型名（支持别名：sonnet, opus, haiku） |
+| `--provider deepseek\|openai` | `deepseek` | LLM 提供商 |
+| `--model MODEL` | `deepseek-chat` | 模型名（deepseek-chat / deepseek-reasoner） |
 | `--api-key KEY` | 环境变量 | API 密钥 |
 | `--api-base URL` | 自动 | API 地址 |
 | `--workspace PATH` | 当前目录 | 工作目录 |
@@ -261,7 +265,7 @@ mini-claude-code/
 │   │   └── tool_executor.py        # StreamingToolExecutor — 流式工具编排
 │   ├── llm/
 │   │   ├── provider.py             # LLMProvider 抽象
-│   │   ├── anthropic_provider.py   # Anthropic（流式）
+│   │   ├── anthropic_provider.py   # Anthropic（流式，可选）
 │   │   └── openai_provider.py      # OpenAI/DeepSeek（流式）
 │   ├── tools/
 │   │   ├── base.py                 # Tool 协议 + ToolResult
@@ -297,11 +301,6 @@ python tests/integration/test_project_workflow.py
 
 ## 架构参考
 
-本项目的核心循环、压缩、权限管线基于 Claude Code（Anthropic 官方 CLI）的源码翻译：
-- `agent/loop.py` ← `src/query.ts` queryLoop()
-- `agent/retry.py` ← `src/services/api/withRetry.ts`
-- `agent/tool_executor.py` ← `src/services/tools/StreamingToolExecutor.ts`
-- `tools/safety.py` ← 内联于 query.ts 的 stuck/stale 检测
-- 自动压缩 ← `src/services/compact/autoCompact.ts`
-- 终端样式 ← Claude Code 的 ↳ 输出风格
-- 工具协议 ← `src/Tool.ts`
+本项目核心架构参考了 Anthropic 官方 Claude Code CLI 的设计：
+- Agent 工具循环、自动压缩、权限管线、终端 UX 风格
+- 工具协议、流式执行、记忆系统、Skills 机制
