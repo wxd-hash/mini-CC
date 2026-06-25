@@ -196,12 +196,11 @@ def _print_history(messages: list[dict[str, Any]]) -> None:
         elif msg_type == "tool_result":
             result = content
             is_err = msg.get("is_error", False)
+            first_line = result.split("\n")[0][:200]
             if is_err:
-                first_line = result.split("\n")[0][:200]
-                print(f"  {term._DIM}↳{term._RESET} {term._RED}✗{term._RESET} {term._RED}{first_line}{term._RESET}")
+                print(f"    {term._RED}✗{term._RESET} {term._RED}{first_line}{term._RESET}")
             else:
-                first_line = result.split("\n")[0][:200]
-                print(f"  {term._DIM}↳{term._RESET} {term._GREEN}✓{term._RESET} {term._DIM}{first_line}{term._RESET}")
+                print(f"    {term._GREEN}✓{term._RESET} {term._DIM}{first_line}{term._RESET}")
 
         elif msg_type in ("permission_denied", "error"):
             print(f"  {term._RED}{msg_type}: {content}{term._RESET}")

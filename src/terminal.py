@@ -50,25 +50,25 @@ def tool_call(name: str, params: str) -> str:
 
 
 def tool_running(name: str, params: str, activity: str = "") -> str:
-    """Tool executing — '↳ ToolName(params) ... ⏳ activity'."""
+    """Tool executing — indented below call line."""
     label = activity or "..."
-    return f"  {_DIM}↳ {_CYAN}{name}{_RESET}{_DIM}({params}){_RESET} {_DIM}  ...  {label}{_RESET}"
+    return f"    {_DIM}  ...  {label}{_RESET}"
 
 
 def tool_done(result: str, max_len: int = 200) -> str:
-    """Tool result — '  ↳ ✓ result_summary' (claude-code style)."""
+    """Tool result — indented below tool call: '     ✓ result'."""
     if len(result) > max_len:
         result = result[:max_len] + "..."
     first_line = result.split("\n")[0].strip()
-    return f"  {_DIM}↳{_RESET} {_GREEN}✓{_RESET} {_DIM}{first_line}{_RESET}"
+    return f"    {_GREEN}✓{_RESET} {_DIM}{first_line}{_RESET}"
 
 
 def tool_error(result: str, max_len: int = 200) -> str:
-    """Tool error — '  ↳ ✗ error'."""
+    """Tool error — indented below tool call: '     ✗ error'."""
     if len(result) > max_len:
         result = result[:max_len] + "..."
     first_line = result.split("\n")[0].strip()
-    return f"  {_DIM}↳{_RESET} {_RED}✗{_RESET} {_RED}{first_line}{_RESET}"
+    return f"    {_RED}✗{_RESET} {_RED}{first_line}{_RESET}"
 
 
 # -- Legacy compat aliases (kept for existing callers) -----------------------
