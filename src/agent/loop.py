@@ -286,20 +286,19 @@ class Engine:
                 _start_spinner()
                 continue
 
-            # Stop spinner on first real event after starting it
-            _stop_spinner()
-
             if ev_type == "text":
                 chunk = event[1]
                 last_text += chunk
                 _buf.append(chunk)
                 has_output = True
             elif ev_type == "tool_call":
-                # Flush buffered text before showing tool calls
+                # Stop spinner and flush buffered text before showing tool calls
+                _stop_spinner()
                 if _buf and not quiet:
                     print(render_markdown(_flush_buf()), end="", flush=True)
                 last_text = ""
             elif ev_type == "error":
+                _stop_spinner()
                 if not quiet:
                     print(term.error(event[1]))
             elif ev_type == "tool_executing":
@@ -307,9 +306,13 @@ class Engine:
                     _, name, params, activity = event
                     print(term.tool_running(name, self._fmt_params(params), activity or ""))
             elif ev_type == "waiting":
-                pass
+                # Text stream done — stop spinner and flush now
+                _stop_spinner()
+                if _buf and not quiet:
+                    print(render_markdown(_flush_buf()), end="", flush=True)
 
         # Flush remaining buffered text at end of response
+        _stop_spinner()
         if _buf and not quiet:
             print(render_markdown(_flush_buf()), end="", flush=True)
 
