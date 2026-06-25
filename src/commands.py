@@ -170,61 +170,50 @@ def do_resume(
 
 
 def _print_history(messages: list[dict[str, Any]]) -> None:
-    """Print loaded session messages with rich terminal formatting.
+    """Print loaded session messages with exact live-session terminal styles.
 
-    Detects [tool], [called], [permission_denied], [error] prefixes and
-    applies the same ↳ / ✓ / ✗ styles used during live sessions.
+    Uses _type field set by load_session_messages:
+      user_input      →  > green prompt
+      assistant_text  →  plain text
+      tool_call       →  ↳ cyan tool name (dim)
+      tool_result     →  ↳ ✓ green / ↳ ✗ red
+      permission_denied / error → red
     """
     print(term.hr())
     for msg in messages:
-        role = msg.get("role", "")
+        msg_type = msg.get("_type", "")
         content = msg.get("content", "")
-        if not isinstance(content, str) or not content.strip():
-            continue
 
-        # User messages (user input) → prompt style
-        if role == "user" and not (
-            content.startswith("[tool]") or content.startswith("[permission_denied]")
-            or content.startswith("[error]")
-        ):
+        if msg_type == "user_input":
             print(f"\n  {term._BOLD_GREEN}>{term._RESET} {content}")
 
-        # Tool calls (model requested tool) → ↳ style
-        elif content.startswith("[called:"):
-            tools = content[8:].rstrip("]")
-            for tool in tools.split(", "):
-                print(f"  {term._DIM}↳ {term._CYAN}{tool}{term._RESET}")
-
-        # Tool results → ✓ or ✗ style
-        elif content.startswith("[tool]"):
-            for line in content.split("\n"):
-                line = line.strip()
-                if line.startswith("[tool]"):
-                    # Extract tool name and result
-                    parts = line[6:].strip().split("\n", 1)
-                    name = parts[0] if parts else ""
-                elif line.startswith("→"):
-                    result = line[1:].strip()
-                    is_err = (
-                        "Error" in result or "error" in result
-                        or "denied" in result or result.startswith("[")
-                    )
-                    if is_err:
-                        print(f"  {term._DIM}↳{term._RESET} {term._RED}✗{term._RESET} {term._RED}{result[:200]}{term._RESET}")
-                    else:
-                        print(f"  {term._DIM}↳{term._RESET} {term._GREEN}✓{term._RESET} {term._DIM}{result[:200]}{term._RESET}")
-                elif line:
-                    print(f"  {term._DIM}{line}{term._RESET}")
-
-        # Permission denied / errors → red style
-        elif content.startswith("[permission_denied]") or content.startswith("[error]"):
-            tag = "BLOCKED" if "denied" in content else "error"
-            text = content.split("]", 1)[1].strip() if "]" in content else content
-            print(f"  {term._RED}{tag}: {text}{term._RESET}")
-
-        # Assistant text → plain
-        else:
+        elif msg_type == "assistant_text":
             print(f"\n{content}")
+
+        elif msg_type == "tool_call":
+            print(f"  {term._DIM}↳ {term._CYAN}{content}{term._RESET}")
+
+        elif msg_type == "tool_result":
+            result = content
+            is_err = msg.get("is_error", False)
+            if is_err:
+                first_line = result.split("\n")[0][:200]
+                print(f"  {term._DIM}↳{term._RESET} {term._RED}✗{term._RESET} {term._RED}{first_line}{term._RESET}")
+            else:
+                first_line = result.split("\n")[0][:200]
+                print(f"  {term._DIM}↳{term._RESET} {term._GREEN}✓{term._RESET} {term._DIM}{first_line}{term._RESET}")
+
+        elif msg_type in ("permission_denied", "error"):
+            print(f"  {term._RED}{msg_type}: {content}{term._RESET}")
+
+        else:
+            # Fallback for old-format messages without _type
+            role = msg.get("role", "")
+            if role == "user":
+                print(f"\n  {term._BOLD_GREEN}>{term._RESET} {str(content)[:500]}")
+            else:
+                print(f"\n{str(content)[:500]}")
+
     print(term.hr())
     print()
 

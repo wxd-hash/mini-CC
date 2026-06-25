@@ -387,12 +387,24 @@ class Engine:
 
     def resume(self, history: list[dict[str, Any]]) -> None:
         for msg in history:
-            if msg.get("role", "user") == "user":
+            msg_type = msg.get("_type", "")
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+
+            # New _type-based format from load_session_messages
+            if msg_type in ("user_input", "tool_result", "permission_denied", "error"):
                 self._messages.append(
-                    self._provider.make_user_message(msg.get("content", ""))
+                    self._provider.make_user_message(content)
+                )
+            elif msg_type in ("assistant_text", "tool_call"):
+                self._messages.append({"role": "assistant", "content": content})
+            # Old role-based format (backward compat)
+            elif role == "user":
+                self._messages.append(
+                    self._provider.make_user_message(content)
                 )
             else:
-                self._messages.append({"role": "assistant", "content": msg.get("content", "")})
+                self._messages.append({"role": "assistant", "content": content})
 
     def reload(self) -> None:
         self._cached_prompt = None

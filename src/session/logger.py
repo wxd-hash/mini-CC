@@ -321,17 +321,19 @@ def load_session_messages(path: Path, max_events: int = MAX_RESUME_EVENTS) -> li
         t = ev.get("type", "?")
         if t == "user_input":
             if pending_tools:
-                messages.append({"role": "assistant", "content": f"[called: {', '.join(pending_tools)}]"})
+                for tool in pending_tools:
+                    messages.append({"_type": "tool_call", "content": tool})
                 pending_tools.clear()
-            messages.append({"role": "user", "content": ev.get("content", "")})
+            messages.append({"_type": "user_input", "content": ev.get("content", "")})
 
         elif t == "assistant_text":
             content = ev.get("content", "")
             if content.strip():
                 if pending_tools:
-                    messages.append({"role": "assistant", "content": f"[called: {', '.join(pending_tools)}]"})
+                    for tool in pending_tools:
+                        messages.append({"_type": "tool_call", "content": tool})
                     pending_tools.clear()
-                messages.append({"role": "assistant", "content": content})
+                messages.append({"_type": "assistant_text", "content": content})
 
         elif t == "tool_use":
             name = ev.get("name", "?")
@@ -344,17 +346,32 @@ def load_session_messages(path: Path, max_events: int = MAX_RESUME_EVENTS) -> li
             content = ev.get("content", "")
             if len(content) > 500:
                 content = content[:500] + "..."
-            tool_text = f"[tool] {name}\n→ {content}"
             if pending_tools:
-                tool_text = f"{pending_tools.pop(0)}\n{tool_text}"
-            messages.append({"role": "user", "content": tool_text})
+                tool_name = pending_tools.pop(0)
+                messages.append({"_type": "tool_call", "content": tool_name})
+            is_err = (
+                "error" in content[:50].lower() or "Error" in content[:50]
+                or "denied" in content[:50].lower() or "Denied" in content[:50]
+                or "BLOCKED" in content[:50] or "Permission" in content[:50]
+            )
+            messages.append({
+                "_type": "tool_result",
+                "content": content,
+                "tool_name": name,
+                "is_error": is_err,
+            })
 
-        elif t in ("permission_denied", "error"):
-            text = f"[{t}] {ev.get('name', '')} {ev.get('message', '')}".strip()
-            messages.append({"role": "user", "content": text})
+        elif t == "permission_denied":
+            text = ev.get('name', '?')
+            messages.append({"_type": "permission_denied", "content": text})
+
+        elif t == "error":
+            text = ev.get('message', '?')
+            messages.append({"_type": "error", "content": text})
 
     if pending_tools:
-        messages.append({"role": "assistant", "content": f"[called: {', '.join(pending_tools)}]"})
+        for tool in pending_tools:
+            messages.append({"_type": "tool_call", "content": tool})
 
     return messages
 
