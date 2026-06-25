@@ -275,14 +275,10 @@ def select_menu(options: list[str]) -> int:
 # ---------------------------------------------------------------------------
 
 def readline(prompt_text: str = "> ") -> str:
-    """Read a line of input. Multi-line pastes are joined."""
+    """Read a line of input."""
     sys.stdout.write(prompt_text)
     sys.stdout.flush()
-    first = input()
-    remaining = _drain_stdin()
-    if not remaining:
-        return first
-    return first + " " + " ".join(remaining)
+    return input()
 
 
 # ---------------------------------------------------------------------------
