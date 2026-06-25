@@ -100,6 +100,31 @@ def _is_dangerous_path(path: str) -> bool:
     return False
 
 
+def _sanitize_self_kill(command: str) -> str:
+    """Remove any sub-command that would kill this agent's own PID.
+
+    Returns the sanitized command, or empty string if nothing remains.
+    """
+    import os
+    own_pid = str(os.getpid())
+    # Remove taskkill /PID <own_pid> ... (up to next & or end)
+    command = re.sub(
+        rf"taskkill\s+(/F\s+)?/PID\s+{own_pid}\b[^&]*\s*&?\s*",
+        "", command, flags=re.IGNORECASE,
+    )
+    # Remove kill <own_pid>
+    command = re.sub(
+        rf"(?:^|\s)kill\s+(?:-9\s+)?{own_pid}\b[^;&]*\s*;?\s*",
+        " ", command, flags=re.IGNORECASE,
+    )
+    # Remove tskill <own_pid>
+    command = re.sub(
+        rf"tskill\s+{own_pid}\b[^&]*\s*&?\s*",
+        "", command, flags=re.IGNORECASE,
+    )
+    return command.strip().rstrip("&;").strip()
+
+
 def _is_self_destructive(command: str) -> bool:
     """Check if a command would kill this agent process. NEVER allowed.
 
@@ -177,14 +202,22 @@ class PermissionChecker:
         tool_name = tool if isinstance(tool, str) else tool.name
 
         # ═══════════════════════════════════════════════════════════════
-        # SELF-PRESERVATION: commands that kill this process are NEVER
-        # allowed, not even with confirmation. This runs BEFORE auto_approve.
+        # SELF-PRESERVATION — mass-kill / fork bombs are NEVER allowed.
+        # Agent's own PID in compound commands is sanitized (filtered out)
+        # rather than blocking the whole command.
         # ═══════════════════════════════════════════════════════════════
         if tool_name == "run_shell":
             cmd = tool_input.get("command", "")
+            # Mass-kill patterns — always block
             if _is_self_destructive(cmd):
                 self._deny_self_destruct(cmd)
                 return "deny"
+            # Own PID in compound command — sanitize, don't block
+            sanitized = _sanitize_self_kill(cmd)
+            if sanitized != cmd:
+                tool_input["command"] = sanitized
+                if not sanitized:
+                    return "deny"  # nothing left after sanitization
 
         # Auto-approve flag bypasses everything
         if self.auto_approve:

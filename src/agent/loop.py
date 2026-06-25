@@ -21,7 +21,7 @@ from src.agent.tool_executor import StreamingToolExecutor
 from src.config import MAX_TOOL_ROUNDS, KEEP_RECENT_MESSAGES
 from src.context import build_system_prompt, compact_messages, micro_compact
 from src.llm.provider import LLMProvider, TextDelta, ToolUseBlock, StreamEnd
-from src.security.permission import PermissionChecker, _is_self_destructive as _is_self_destructive_cmd
+from src.security.permission import PermissionChecker
 from src.session.logger import SessionLogger, SessionStore
 from src.utils.markdown import render as render_markdown
 from src import terminal as term
