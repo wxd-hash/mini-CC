@@ -99,7 +99,7 @@ class Spinner:
         if self._thread is not None:
             self._thread.join(timeout=0.5)
         # Clear the spinner line
-        sys.stdout.write(f"\r  {_DIM}✓  已用时 {self.elapsed:.0f}s{_RESET}\n")
+        sys.stdout.write(f"\r{_DIM}✓  已用时 {self.elapsed:.0f}s{_RESET}\n")
         sys.stdout.flush()
 
     def _run(self) -> None:
@@ -351,20 +351,11 @@ def select_menu(
     _utf8_buf = b""
     _drain_console_buffer()
 
-    total_lines = 1 + len(options)
-    if title:
-        total_lines += 2  # title + hr
-    if footer:
-        total_lines += 2  # hr + footer
-
     sys.stdout.write("\033[?25l")
     sys.stdout.flush()
 
     try:
-        # Save cursor position, render menu in-place
-        sys.stdout.write("\033[s")
         _render()
-
         while True:
             ch = _getch()
             if ch in ("\r", "\n", " "):
@@ -378,8 +369,6 @@ def select_menu(
                     elif arrow == "B":
                         selected = (selected + 1) % n
                 else:
-                    sys.stdout.write("\033[u\033[J\033[?25h")
-                    sys.stdout.flush()
                     return -1
             elif ch in ("\x00", "\xe0"):
                 k = _getch()
@@ -392,21 +381,21 @@ def select_menu(
             elif ch in ("s", "j"):
                 selected = (selected + 1) % n
             elif ch == "q":
-                sys.stdout.write("\033[u\033[J\033[?25h")
-                sys.stdout.flush()
                 return -1
 
             # Move cursor up to re-render
-            sys.stdout.write(f"\033[{total_lines}A")
+            # Line count: 1 (empty print) + N options + optional title/footer
+            rendered_lines = 1 + len(options)
+            if title:
+                rendered_lines += 2  # title + hr
+            if footer:
+                rendered_lines += 2  # hr + footer
+            sys.stdout.write(f"\033[{rendered_lines}A")
             sys.stdout.flush()
             _render()
     finally:
         sys.stdout.write("\033[?25h")
         sys.stdout.flush()
-
-    # Restore cursor + erase menu area (no empty lines left behind)
-    sys.stdout.write("\033[u\033[J")
-    sys.stdout.flush()
 
     return selected
 
