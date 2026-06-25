@@ -163,9 +163,9 @@ class PermissionChecker:
         if self._mode == Mode.PLAN:
             return self._check_plan(tool_name)
 
-        # run_shell high-risk commands ALWAYS prompt
+        # run_shell high-risk commands ALWAYS prompt — no "don't ask again"
         if tool_name == "run_shell" and self._is_high_risk(tool_input.get("command", "")):
-            result = self._prompt(tool_name, tool_input)
+            result = self._prompt(tool_name, tool_input, allow_always=False)
             return "allow" if result else "deny"
 
         # "Don't ask again" grants (turn-scoped)
@@ -212,7 +212,7 @@ class PermissionChecker:
             return "allow"
         if tool_name == "run_shell":
             if self._is_high_risk(tool_input.get("command", "")):
-                result = self._prompt(tool_name, tool_input)
+                result = self._prompt(tool_name, tool_input, allow_always=False)
                 return "allow" if result else "deny"
             return "allow"
         return "deny"
@@ -233,7 +233,10 @@ class PermissionChecker:
     # User prompt
     # ------------------------------------------------------------------
 
-    def _prompt(self, tool_name: str, tool_input: dict[str, Any]) -> bool:
+    def _prompt(
+        self, tool_name: str, tool_input: dict[str, Any],
+        allow_always: bool = True,
+    ) -> bool:
         summary = self._summarize(tool_name, tool_input)
         title = {
             "run_shell": "Shell 命令",
@@ -241,7 +244,13 @@ class PermissionChecker:
             "edit_file": "编辑文件",
         }.get(tool_name, tool_name)
 
-        options = ["是", "是，不再询问", "否"]
+        if allow_always:
+            options = ["是", "是，不再询问", "否"]
+            fallback_hint = "  [y] Yes  [a] Yes, always  [n] No  "
+        else:
+            options = ["是", "否"]
+            fallback_hint = "  [y] Yes  [n] No  "
+
         try:
             idx = term.select_menu(
                 options,
@@ -249,14 +258,13 @@ class PermissionChecker:
                 footer="Esc 拒绝 · Enter 确认",
             )
         except Exception:
-            # Fallback: if terminal doesn't support raw input, use input()
             print(f"  {term._YELLOW}[auth]{term._RESET} Allow {summary}?")
-            print("  [y] Yes  [a] Yes, always  [n] No  ", end="", flush=True)
+            print(fallback_hint, end="", flush=True)
             try:
                 resp = input().strip().lower()
             except (EOFError, KeyboardInterrupt):
                 return False
-            if resp in ("a", "yes always", "always"):
+            if allow_always and resp in ("a", "yes always", "always"):
                 self._always_allow.add(tool_name)
                 return True
             if resp in ("y", "yes", ""):
@@ -264,7 +272,7 @@ class PermissionChecker:
             self._deny_msg(tool_name)
             return False
 
-        if idx == 1:
+        if allow_always and idx == 1:
             self._always_allow.add(tool_name)
             return True
         if idx == 0:
