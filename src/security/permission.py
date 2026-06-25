@@ -376,11 +376,20 @@ class PermissionChecker:
         print(term.denied(f"Denied by permission system (mode={self._mode.value}): {tool_name}"))
 
     def _deny_self_destruct(self, command: str) -> None:
-        """Notify user that a self-destructive command was blocked."""
+        """Notify user that a self-destructive command was blocked.
+
+        Shows the agent's own PID so the model can target specific PIDs
+        instead of mass-killing all Python processes.
+        """
+        import os
+        own_pid = os.getpid()
         print()
-        print(term.permission_prompt("BLOCKED: Self-destructive command detected!"))
-        print(term.error(f"  Command: {command[:100]}"))
-        print(term.error("  This would kill this agent process. Permanently denied."))
+        print(term.permission_prompt("BLOCKED: 会杀死 agent 自身！"))
+        print(term.error(f"  {command[:120]}"))
+        print(term.info(
+            f"  agent PID = {own_pid}，用 taskkill /PID <目标PID> 杀特定进程，"
+            f"不要用 /IM python 全部杀"
+        ))
 
     # ------------------------------------------------------------------
     # Display

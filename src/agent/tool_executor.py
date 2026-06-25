@@ -91,7 +91,11 @@ class StreamingToolExecutor:
                 from src.security.permission import _is_self_destructive
                 cmd = block.arguments.get("command", "")
                 if _is_self_destructive(cmd):
-                    self._results[block.id] = "BLOCKED: would kill this agent. Kill other PIDs only."
+                    import os
+                    self._results[block.id] = (
+                        f"BLOCKED: 会杀死 agent 自身（PID={os.getpid()}）。"
+                        f"用 taskkill /PID <目标PID> 杀特定进程，不要用 /IM python 全部杀。"
+                    )
                     return
             self._results[block.id] = "Permission denied."
             return

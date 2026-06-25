@@ -35,6 +35,8 @@ MEMORY.md 会被注入到后续所有对话的系统提示中。
 - 服务器/长运行命令：用 run_in_background=true，启动后立即返回。
   进程在后台运行，不需要等结果。不要杀进程，不要重启。
 - 命令超过 15 秒会自动转入后台，这不是错误，进程还在跑。
+- 绝对禁止 taskkill /IM python / killall python 等批量杀进程命令，
+  会杀死 agent 自身。杀进程必须用 taskkill /PID <具体PID>。
 - 绝对禁止 sleep 循环或轮询。命令失败就诊断根因，不要重试
 - 如果必须 sleep，控制在 2 秒以内
 - 优先用专用工具：read_file 不用 cat，write_file 不用 echo >，
