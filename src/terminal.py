@@ -41,19 +41,12 @@ def set_no_color() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tool display — matches claude-code's visual style
-# Using ASCII-safe characters for cross-platform (GBK) compatibility
+# Tool display — matches claude-code's ↳ prefix pattern
 # ---------------------------------------------------------------------------
 
-# ASCII-safe symbols that work on all terminals
-_TOOL_ARROW = ">"   # U+21B3 ↳ not supported by GBK on Windows
-_TOOL_OK = "ok"     # U+2713 ✓ not reliably supported by GBK
-_TOOL_ERR = "ERR"   # U+2717 ✗ not reliably supported by GBK
-
-
 def tool_call(name: str, params: str) -> str:
-    """Tool call header — '> tool_name(params)'."""
-    return f"  {_DIM}{_TOOL_ARROW} {_CYAN}{name}{_RESET}{_DIM}({params}){_RESET}"
+    """Tool call header — matches claude-code '↳ ToolName(params)'."""
+    return f"  {_DIM}↳ {_CYAN}{name}{_RESET}{_DIM}({params}){_RESET}"
 
 
 def tool_running(name: str, params: str, activity: str = "") -> str:
@@ -63,19 +56,19 @@ def tool_running(name: str, params: str, activity: str = "") -> str:
 
 
 def tool_done(result: str, max_len: int = 200) -> str:
-    """Tool result — indented below tool call."""
+    """Tool result — indented below tool call: '     ✓ result'."""
     if len(result) > max_len:
         result = result[:max_len] + "..."
     first_line = result.split("\n")[0].strip()
-    return f"    {_GREEN}{_TOOL_OK}{_RESET} {_DIM}{first_line}{_RESET}"
+    return f"    {_GREEN}✓{_RESET} {_DIM}{first_line}{_RESET}"
 
 
 def tool_error(result: str, max_len: int = 200) -> str:
-    """Tool error — indented below tool call."""
+    """Tool error — indented below tool call: '     ✗ error'."""
     if len(result) > max_len:
         result = result[:max_len] + "..."
     first_line = result.split("\n")[0].strip()
-    return f"    {_RED}{_TOOL_ERR}{_RESET} {_RED}{first_line}{_RESET}"
+    return f"    {_RED}✗{_RESET} {_RED}{first_line}{_RESET}"
 
 
 # -- Legacy compat aliases (kept for existing callers) -----------------------

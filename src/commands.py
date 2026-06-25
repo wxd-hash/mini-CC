@@ -175,8 +175,8 @@ def _print_history(messages: list[dict[str, Any]]) -> None:
     Uses _type field set by load_session_messages:
       user_input      →  > green prompt
       assistant_text  →  plain text
-      tool_call       →  > cyan tool name (dim)
-      tool_result     →  ok green / ERR red
+      tool_call       →  ↳ cyan tool name (dim)
+      tool_result     →  ↳ ✓ green / ↳ ✗ red
       permission_denied / error → red
     """
     print(term.hr())
@@ -191,16 +191,16 @@ def _print_history(messages: list[dict[str, Any]]) -> None:
             print(f"\n{content}")
 
         elif msg_type == "tool_call":
-            print(f"  {term._DIM}>{term._RESET} {term._CYAN}{content}{term._RESET}")
+            print(f"  {term._DIM}↳ {term._CYAN}{content}{term._RESET}")
 
         elif msg_type == "tool_result":
             result = content
             is_err = msg.get("is_error", False)
             first_line = result.split("\n")[0][:200]
             if is_err:
-                print(f"    {term._RED}ERR{term._RESET} {term._RED}{first_line}{term._RESET}")
+                print(f"    {term._RED}✗{term._RESET} {term._RED}{first_line}{term._RESET}")
             else:
-                print(f"    {term._GREEN}ok{term._RESET} {term._DIM}{first_line}{term._RESET}")
+                print(f"    {term._GREEN}✓{term._RESET} {term._DIM}{first_line}{term._RESET}")
 
         elif msg_type in ("permission_denied", "error"):
             print(f"  {term._RED}{msg_type}: {content}{term._RESET}")
