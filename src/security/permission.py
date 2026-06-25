@@ -20,23 +20,33 @@ class Mode(Enum):
     AUTO = "auto"
 
 
-# Single-word dangerous commands — these always prompt for confirmation
+# Commands that ALWAYS prompt — irreversible damage risks only.
+# Claude Code handles most safety via AI classifier; mini-cc keeps a minimal
+# hardcoded list. Development-common commands (curl, ssh, chmod, pip install,
+# git push, etc.) are NOT blocked — they're routine operations.
 _HIGH_RISK_WORDS = re.compile(
-    r"\b(?:rm|del|rmdir|rd|sudo|curl|wget|ssh|scp|chmod|chown"
-    r"|taskkill|tskill|kill|killall|pkill|format|mkfs)\b",
+    r"\b(?:sudo|shutdown|reboot|format|mkfs)\b",
     re.IGNORECASE,
 )
-# Multi-word dangerous commands
-_HIGH_RISK_PHRASES = [
-    re.compile(r"\bgit\s+push\b", re.IGNORECASE),
-    re.compile(r"\bpip\s+install\b", re.IGNORECASE),
-    re.compile(r"\bnpm\s+install\b", re.IGNORECASE),
-    re.compile(r"\bdocker\s+(rm|rmi|stop|kill)\b", re.IGNORECASE),
-    re.compile(r"\bgit\s+reset\s+--hard\b", re.IGNORECASE),
-    re.compile(r"\bshutdown\b", re.IGNORECASE),
-    re.compile(r"\breboot\b", re.IGNORECASE),
-    re.compile(r"\bwget\b.*\b-O\b", re.IGNORECASE),
-]
+
+# Destructive remove — only prompt when force/recursive flags are
+# directly attached to the command (not elsewhere in the string)
+_DESTRUCTIVE_RM = re.compile(
+    r"\b(?:rm|del|rmdir|rd)\b\s+(?:-[^\s]*[rf]|/[sSqQ])",
+    re.IGNORECASE,
+)
+
+# Command-injection patterns — curl/wget piping to shell
+_PIPE_TO_SHELL = re.compile(
+    r"(?:curl|wget)\b.*\|\s*(?:bash|sh|zsh|python|perl|ruby)",
+    re.IGNORECASE,
+)
+
+# Request persistent system changes
+_SYSTEM_INSTALL = re.compile(
+    r"\b(?:apt|yum|brew|choco|scoop)\s+(?:install|remove|purge|uninstall)\b",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +67,37 @@ _SELF_DESTRUCT_PATTERNS = [
     re.compile(r":\(\)\s*\{", re.IGNORECASE),
     re.compile(r"%0\|%0", re.IGNORECASE),
 ]
+
+
+# Files/directories that trigger a prompt when written to in auto mode
+_DANGEROUS_FILES = frozenset({
+    ".gitconfig", ".gitmodules",
+    ".bashrc", ".bash_profile", ".zshrc", ".zprofile", ".profile",
+    ".ripgreprc", ".mcp.json", ".claude.json",
+})
+_DANGEROUS_DIRS = frozenset({
+    ".git", ".vscode", ".idea", ".claude",
+    "/etc", "/usr", "/boot", "/opt", "/var",
+})
+
+
+def _is_dangerous_path(path: str) -> bool:
+    """Check if writing to *path* is dangerous (system config, git internals).
+
+    Matches Claude Code's checkPathSafetyForAutoEdit.
+    """
+    import os
+    p = path.replace("\\", "/").lower()
+    name = os.path.basename(p)
+    if name in _DANGEROUS_FILES:
+        return True
+    for d in _DANGEROUS_DIRS:
+        if d in p.split("/"):
+            return True
+    # Windows-specific
+    if "c:\\windows" in p or "c:\\program files" in p:
+        return True
+    return False
 
 
 def _is_self_destructive(command: str) -> bool:
@@ -153,6 +194,13 @@ class PermissionChecker:
         if self._dream_mode:
             return self._check_dream(tool_name)
 
+        # Auto-mode: check file path safety for writes
+        if self._mode == Mode.AUTO and tool_name in ("write_file", "edit_file"):
+            path = tool_input.get("path", "")
+            if _is_dangerous_path(path):
+                result = self._prompt(tool_name, tool_input, allow_always=False)
+                return "allow" if result else "deny"
+
         # Plan mode: check delegate to plan manager first
         if self._plan_mode and self._plan_manager is not None:
             pm_result = self._plan_manager.check_permission(tool_name, tool_input)
@@ -223,10 +271,20 @@ class PermissionChecker:
 
     @staticmethod
     def _is_high_risk(command: str) -> bool:
-        """True if *command* contains known dangerous patterns."""
+        """True if *command* contains known dangerous patterns.
+
+        Matches Claude Code's approach: only prompt for truly irreversible
+        operations, not routine development commands.
+        """
         if _HIGH_RISK_WORDS.search(command):
             return True
-        return any(p.search(command) for p in _HIGH_RISK_PHRASES)
+        if _DESTRUCTIVE_RM.search(command):
+            return True
+        if _PIPE_TO_SHELL.search(command):
+            return True
+        if _SYSTEM_INSTALL.search(command):
+            return True
+        return False
 
 
     # ------------------------------------------------------------------
