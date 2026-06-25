@@ -35,29 +35,14 @@ pip install --force-reinstall --no-cache-dir git+https://github.com/wxd-hash/min
 
 **设置 API key（二选一）：**
 
-#### Windows PowerShell
-
-```powershell
-# 临时（当前窗口有效，关掉就没了）
-$env:DEEPSEEK_API_KEY = "sk-你的key"
-$env:ANTHROPIC_API_KEY = "sk-ant-你的key"
-
-# 永久（所有窗口有效，只需设一次）
-[Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "sk-你的key", "User")
-[Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY", "sk-ant-你的key", "User")
-```
-
-#### macOS / Linux
-
 ```bash
-# 临时（当前终端有效，关掉就没了）
-export DEEPSEEK_API_KEY="sk-你的key"
-export ANTHROPIC_API_KEY="sk-ant-你的key"
+# DeepSeek（默认）
+export DEEPSEEK_API_KEY="sk-你的key"                           # macOS / Linux
+[Environment]::SetEnvironmentVariable("DEEPSEEK_API_KEY", "sk-你的key", "User")  # Windows PowerShell
 
-# 永久（写入 shell 配置，只需设一次）
-echo 'export DEEPSEEK_API_KEY="sk-你的key"' >> ~/.zshrc
-echo 'export ANTHROPIC_API_KEY="sk-ant-你的key"' >> ~/.zshrc
-source ~/.zshrc
+# Claude
+export ANTHROPIC_API_KEY="sk-ant-你的key"                      # macOS / Linux
+[Environment]::SetEnvironmentVariable("ANTHROPIC_API_KEY", "sk-ant-你的key", "User")  # Windows PowerShell
 ```
 
 > **切换 provider**：`export MINICLAUDE_PROVIDER=anthropic`（或 `deepseek`）。默认 deepseek。

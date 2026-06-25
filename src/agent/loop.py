@@ -620,10 +620,7 @@ class Engine:
                         for tu in batch:
                             if tu.id in denied:
                                 if tu.name == "run_shell" and _is_self_destructive_cmd(tu.arguments.get("command", "")):
-                                    result = (
-                                        "BLOCKED: /IM python kills ALL Python. "
-                                        "Instead: taskkill /PID <pid> to kill just the server."
-                                    )
+                                    result = "BLOCKED: would kill this agent. Kill other PIDs only."
                                 else:
                                     result = "Permission denied."
                             else:
@@ -652,12 +649,7 @@ class Engine:
                             elif self._permissions.check(tool, ti) == "deny":
                                 # Check if this was a self-destructive command
                                 if tn == "run_shell" and _is_self_destructive_cmd(ti.get("command", "")):
-                                    result = (
-                                        "BLOCKED: /IM python kills ALL Python processes including me. "
-                                        "Instead, use 'taskkill /PID <server_pid>' to kill just the "
-                                        "server process. Or use 'netstat -ano | findstr :<port>' to "
-                                        "find the server PID first, then kill that specific PID."
-                                    )
+                                    result = "BLOCKED: would kill this agent's own PID. Kill other PIDs only."
                                 else:
                                     result = "Permission denied."
                                 print(term.permission_denied(f"Denied: {tn}"))

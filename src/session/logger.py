@@ -315,40 +315,46 @@ def load_session_messages(path: Path, max_events: int = MAX_RESUME_EVENTS) -> li
         events = events[-max_events:]
 
     messages: list[dict[str, Any]] = []
+    pending_tools: list[str] = []
 
     for ev in events:
         t = ev.get("type", "?")
         if t == "user_input":
+            if pending_tools:
+                messages.append({"role": "assistant", "content": f"[called: {', '.join(pending_tools)}]"})
+                pending_tools.clear()
             messages.append({"role": "user", "content": ev.get("content", "")})
 
         elif t == "assistant_text":
             content = ev.get("content", "")
             if content.strip():
+                if pending_tools:
+                    messages.append({"role": "assistant", "content": f"[called: {', '.join(pending_tools)}]"})
+                    pending_tools.clear()
                 messages.append({"role": "assistant", "content": content})
 
         elif t == "tool_use":
             name = ev.get("name", "?")
             args = ev.get("args", {})
-            # Emit a synthetic assistant message with tool_calls
-            call_id = f"resumed_{len(messages)}"
-            messages.append({
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [{"id": call_id, "type": "function",
-                               "function": {"name": name, "arguments": json.dumps(args, ensure_ascii=False)}}]
-            })
+            args_str = json.dumps(args, ensure_ascii=False)
+            pending_tools.append(f"{name}({args_str})")
 
         elif t == "tool_result":
+            name = ev.get("name", "?")
             content = ev.get("content", "")
             if len(content) > 500:
                 content = content[:500] + "..."
-            # Use role="tool" format (OpenAI-compatible)
-            call_id = f"resumed_{len(messages) - 1}"
-            messages.append({"role": "tool", "tool_call_id": call_id, "content": content})
+            tool_text = f"[tool] {name}\n→ {content}"
+            if pending_tools:
+                tool_text = f"{pending_tools.pop(0)}\n{tool_text}"
+            messages.append({"role": "user", "content": tool_text})
 
         elif t in ("permission_denied", "error"):
             text = f"[{t}] {ev.get('name', '')} {ev.get('message', '')}".strip()
             messages.append({"role": "user", "content": text})
+
+    if pending_tools:
+        messages.append({"role": "assistant", "content": f"[called: {', '.join(pending_tools)}]"})
 
     return messages
 

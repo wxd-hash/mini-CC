@@ -44,28 +44,39 @@ _HIGH_RISK_PHRASES = [
 # ---------------------------------------------------------------------------
 
 _SELF_DESTRUCT_PATTERNS = [
-    # ── ONLY block mass-kill-by-name of Python ──
-    # taskkill /F /IM python.exe  — kills ALL Python (including this agent)
+    # ── Mass-kill-by-name of Python ──
     re.compile(r"taskkill\s+(/F\s+)?/IM\s+python", re.IGNORECASE),
-    # tskill python / killall python / pkill python
     re.compile(r"tskill\s+python", re.IGNORECASE),
     re.compile(r"(killall|pkill)\s+.*python", re.IGNORECASE),
-    # kill -9 -1  — kills all processes on the system
+    # ── Kill own PID (the agent itself) ──
+    # Built at runtime in _is_self_destructive()
+    # ── System-wide kills ──
     re.compile(r"kill\s+-9\s+-1", re.IGNORECASE),
-    # taskkill /F /IM *  — kills ALL processes
     re.compile(r"taskkill\s+/F\s+/IM\s+\*", re.IGNORECASE),
-    # Fork bombs
+    # ── Fork bombs ──
     re.compile(r":\(\)\s*\{", re.IGNORECASE),
     re.compile(r"%0\|%0", re.IGNORECASE),
 ]
-# NOTE: taskkill /PID <number> is intentionally NOT blocked — killing a
-# specific process by PID is safe. The model can use this to restart a
-# specific server without killing the agent.
 
 
 def _is_self_destructive(command: str) -> bool:
-    """Check if a command would kill this agent process. NEVER allowed."""
-    return any(p.search(command) for p in _SELF_DESTRUCT_PATTERNS)
+    """Check if a command would kill this agent process. NEVER allowed.
+
+    Matches claude-code's approach: block killing the agent's own PID,
+    but allow killing other specific PIDs (for server restart, etc).
+    """
+    # Check static patterns (mass kill, fork bombs, etc)
+    if any(p.search(command) for p in _SELF_DESTRUCT_PATTERNS):
+        return True
+    # Check if command targets the agent's OWN PID
+    import os, re
+    own_pid = str(os.getpid())
+    pid_patterns = [
+        re.compile(rf"taskkill\s+(/F\s+)?/PID\s+{own_pid}\b", re.IGNORECASE),
+        re.compile(rf"(?:^|\s)kill\s+(?:-9\s+)?{own_pid}\b", re.IGNORECASE),
+        re.compile(rf"tskill\s+{own_pid}\b", re.IGNORECASE),
+    ]
+    return any(p.search(command) for p in pid_patterns)
 
 
 class PermissionChecker:
