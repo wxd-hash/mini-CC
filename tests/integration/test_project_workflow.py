@@ -519,8 +519,10 @@ def test_streaming_event_order():
         seq = [e[0] for e in events]
         print(f"  Sequence: {' -> '.join(seq)}")
 
-        assert seq[0] == "text", f"first event should be text, got {seq[0]}"
-        ok("first event is text delta (streaming)")
+        # First meaningful event after waiting_api should be text
+        meaningful = [s for s in seq if s != "waiting_api"]
+        assert meaningful[0] == "text", f"first meaningful event should be text, got {meaningful[0]}"
+        ok("first event (after waiting_api) is text delta (streaming)")
 
         tc = seq.count("tool_call")
         tr = seq.count("tool_result")

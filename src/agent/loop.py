@@ -254,7 +254,7 @@ class Engine:
         # the text phase ends (tool_call or end of submit) because streaming
         # API splits markdown patterns across tiny chunks.
         _buf: list[str] = []
-        _first_event = True
+        _spinner: term.Spinner | None = None
 
         def _flush_buf() -> str:
             nonlocal _buf
@@ -264,20 +264,31 @@ class Engine:
             _buf.clear()
             return full
 
-        # Start animated spinner while waiting for API response
-        _spinner: term.Spinner | None = None
-        if not quiet:
-            _spinner = term.Spinner()
-            _spinner.start()
+        def _start_spinner() -> None:
+            nonlocal _spinner
+            if not quiet and _spinner is None:
+                _spinner = term.Spinner()
+                _spinner.start()
+
+        def _stop_spinner() -> None:
+            nonlocal _spinner
+            if _spinner is not None:
+                _spinner.stop()
+                _spinner = None
+
+        # Start spinner for initial API wait
+        _start_spinner()
 
         for event in self.submit(user_input):
-            # Stop spinner on first event (text, tool, or error)
-            if _first_event:
-                _first_event = False
-                if _spinner is not None:
-                    _spinner.stop()
-                    _spinner = None
             ev_type = event[0]
+
+            if ev_type == "waiting_api":
+                _start_spinner()
+                continue
+
+            # Stop spinner on first real event after starting it
+            _stop_spinner()
+
             if ev_type == "text":
                 chunk = event[1]
                 last_text += chunk
@@ -437,6 +448,9 @@ class Engine:
                 assistant_message: dict[str, Any] = {}
                 full_text = ""
                 tool_uses_seen = False
+
+                # Signal that we're about to wait for API
+                yield ("waiting_api",)
 
                 for stream_event in call_model_with_retry(
                     provider=self._provider,
