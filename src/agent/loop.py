@@ -292,11 +292,15 @@ class Engine:
                 _buf.append(chunk)
                 has_output = True
             elif ev_type == "tool_call":
-                # Stop spinner and flush buffered text before showing tool calls
+                # Flush buffered text before showing tool header.
+                # Tool executor handles spinner during execution.
                 _stop_spinner()
                 if _buf and not quiet:
                     print(render_markdown(_flush_buf()), end="", flush=True)
                 last_text = ""
+            elif ev_type == "tool_result":
+                # Tool result is being printed — stop any remaining spinner
+                _stop_spinner()
             elif ev_type == "error":
                 _stop_spinner()
                 if not quiet:
