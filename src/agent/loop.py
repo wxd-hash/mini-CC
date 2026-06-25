@@ -254,6 +254,7 @@ class Engine:
         # the text phase ends (tool_call or end of submit) because streaming
         # API splits markdown patterns across tiny chunks.
         _buf: list[str] = []
+        _first_event = True
 
         def _flush_buf() -> str:
             nonlocal _buf
@@ -263,7 +264,18 @@ class Engine:
             _buf.clear()
             return full
 
+        # Show thinking indicator while waiting for API response
+        if not quiet:
+            print(term.thinking(), end="", flush=True)
+
         for event in self.submit(user_input):
+            # Clear thinking indicator on first event
+            if _first_event:
+                _first_event = False
+                if not quiet:
+                    import sys as _sys
+                    _sys.stdout.write("\r\033[K")  # clear current line
+                    _sys.stdout.flush()
             ev_type = event[0]
             if ev_type == "text":
                 chunk = event[1]

@@ -182,6 +182,11 @@ def error(text: str) -> str:
     return f"  {_RED}{text}{_RESET}"
 
 
+def thinking() -> str:
+    """Thinking indicator shown while waiting for the first API response."""
+    return f"  {_DIM}思考中...{_RESET}"
+
+
 def info(text: str) -> str:
     """Informational — dimmed."""
     return f"  {_DIM}{text}{_RESET}"
