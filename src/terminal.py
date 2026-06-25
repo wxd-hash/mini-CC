@@ -109,7 +109,7 @@ class Spinner:
             self._frame_idx += 1
 
             time_str = f"  ({elapsed:.0f}s)" if elapsed >= _SHOW_TIMER_AFTER else ""
-            line = f"\r  {_DIM}  {frame}  {self._verb}{time_str}{_RESET}"
+            line = f"\r{_DIM}  {frame}  {self._verb}{time_str}{_RESET}"
             sys.stdout.write(line)
             sys.stdout.flush()
             time.sleep(_SPINNER_FRAME_INTERVAL)
