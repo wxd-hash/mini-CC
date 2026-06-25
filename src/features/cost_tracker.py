@@ -21,9 +21,10 @@ _CLAUDE_PRICING: dict[str, tuple[float, float]] = {
 }
 
 # DeepSeek pricing (approximate)
+# CNY per million tokens (cache miss)
 _DEEPSEEK_PRICING: dict[str, tuple[float, float]] = {
-    "deepseek-v4-flash": (0.14, 0.28),
-    "deepseek-v4-pro": (0.55, 2.19),
+    "deepseek-v4-flash": (1.00, 2.00),   # 输入 1.00, 输出 2.00
+    "deepseek-v4-pro": (3.00, 6.00),     # 输入 3.00, 输出 6.00
 }
 
 

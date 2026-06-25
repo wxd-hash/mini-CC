@@ -69,8 +69,10 @@ def get_effective_context_window_size(model: str, max_tokens: int) -> int:
         ctx = 200_000
     elif "haiku" in model_lower:
         ctx = 200_000
+    elif "deepseek-v4" in model_lower:
+        ctx = 1_000_000  # DeepSeek V4: 1M
     elif "deepseek" in model_lower:
-        ctx = 128_000
+        ctx = 131_072  # DeepSeek V3/R1: 128K
     elif "gpt" in model_lower:
         ctx = 128_000
     else:

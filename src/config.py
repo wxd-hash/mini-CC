@@ -93,6 +93,7 @@ _MODEL_MAX_TOKENS: tuple[tuple[str, int], ...] = (
 )
 
 _OPENAI_MAX_TOKENS: tuple[tuple[str, int], ...] = (
+    ("deepseek-v4", 384_000),  # DeepSeek V4 Flash / Pro: 384K max output
     ("gpt-5", 8192),
     ("gpt-4.1", 16384),
     ("gpt-4o", 16384),
