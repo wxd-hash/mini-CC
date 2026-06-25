@@ -36,7 +36,7 @@ MODEL_ANTHROPIC = "claude-sonnet-4-5"
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6"
 
 # OpenAI-compatible (DeepSeek)
-MODEL_DEEPSEEK = "deepseek-chat"
+MODEL_DEEPSEEK = "deepseek-v4-flash"
 DEEPSEEK_API_BASE = "https://api.deepseek.com/v1"
 DEFAULT_OPENAI_MODEL = "gpt-5.1-codex"
 

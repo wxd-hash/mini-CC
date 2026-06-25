@@ -22,8 +22,8 @@ _CLAUDE_PRICING: dict[str, tuple[float, float]] = {
 
 # DeepSeek pricing (approximate)
 _DEEPSEEK_PRICING: dict[str, tuple[float, float]] = {
-    "deepseek-chat": (0.14, 0.28),
-    "deepseek-reasoner": (0.55, 2.19),
+    "deepseek-v4-flash": (0.14, 0.28),
+    "deepseek-v4-pro": (0.55, 2.19),
 }
 
 

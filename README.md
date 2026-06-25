@@ -47,11 +47,11 @@ export DEEPSEEK_API_KEY="sk-你的key"
 > **指定模型**：
 > ```bash
 > # 环境变量（持久生效）
-> export MINICLAUDE_MODEL=deepseek-chat      # DeepSeek V3（默认）
-> export MINICLAUDE_MODEL=deepseek-reasoner  # DeepSeek R1
+> export MINICLAUDE_MODEL=deepseek-v4-flash  # DeepSeek V4 Flash（默认，快速）
+> export MINICLAUDE_MODEL=deepseek-v4-pro    # DeepSeek V4 Pro
 >
 > # 或启动参数（一次性）
-> minicc --model deepseek-reasoner
+> minicc --model deepseek-v4-pro
 > ```
 
 安装完成，任何目录直接敲 `minicc`：
@@ -115,7 +115,7 @@ python main.py
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--provider deepseek\|openai` | `deepseek` | LLM 提供商 |
-| `--model MODEL` | `deepseek-chat` | 模型名（deepseek-chat / deepseek-reasoner） |
+| `--model MODEL` | `deepseek-v4-flash` | 模型名（deepseek-v4-flash / deepseek-v4-pro） |
 | `--api-key KEY` | 环境变量 | API 密钥 |
 | `--api-base URL` | 自动 | API 地址 |
 | `--workspace PATH` | 当前目录 | 工作目录 |
