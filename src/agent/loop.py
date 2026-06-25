@@ -708,6 +708,13 @@ class Engine:
         except AbortedError:
             self.cancel_turn()
             raise
+        except Exception:
+            # Safety net — catch ALL unhandled exceptions so the process
+            # never crashes. Log the traceback and recover gracefully.
+            import traceback
+            traceback.print_exc()
+            self.cancel_turn()
+            yield ("error", "Internal error — turn cancelled. Please try again.")
 
     # ─── Tool execution helpers (extracted from submit) ──────────────────
 
