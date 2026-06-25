@@ -275,10 +275,16 @@ def select_menu(options: list[str]) -> int:
 # ---------------------------------------------------------------------------
 
 def readline(prompt_text: str = "> ") -> str:
-    """Read a line of input."""
+    """Read a line of input. Multi-line pastes are joined with line breaks."""
     sys.stdout.write(prompt_text)
     sys.stdout.flush()
-    return input()
+    line = input()
+    # After reading the first line, check if stdin still has data.
+    # Only happens when user pastes multiple lines (or terminal glitches).
+    remaining = _drain_stdin()
+    if not remaining:
+        return line
+    return line + "\n" + "\n".join(remaining)
 
 
 # ---------------------------------------------------------------------------
