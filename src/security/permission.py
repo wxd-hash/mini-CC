@@ -208,7 +208,7 @@ class PermissionChecker:
         return "allow" if result else "deny"
 
     def _check_auto(self, tool_name: str, tool_input: dict[str, Any]) -> str:
-        if tool_name in ("read_file", "list_files", "write_file", "search_files", "git_diff"):
+        if tool_name in ("read_file", "list_files", "write_file", "edit_file", "search_files", "git_diff"):
             return "allow"
         if tool_name == "run_shell":
             if self._is_high_risk(tool_input.get("command", "")):
