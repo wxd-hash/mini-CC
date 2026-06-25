@@ -463,10 +463,10 @@ class Engine:
 
                         # Poll for any completed results
                         tid = stream_event.id
-                        for result_id, name, args, content in executor.get_completed_results():
+                        for result_id, name, args, content, elapsed in executor.get_completed_results():
                             if self._logger:
                                 self._logger.tool_result(name, content)
-                            yield self._show_tool_result_tu(name, args, content)
+                            yield self._show_tool_result_tu(name, args, content, elapsed)
 
                     elif isinstance(stream_event, StreamEnd):
                         assistant_message = stream_event.assistant_message
@@ -478,10 +478,10 @@ class Engine:
                     yield ("waiting",)
 
                 # ── Drain remaining tool results ──────────────────────
-                for result_id, name, args, content in executor.get_remaining_results():
+                for result_id, name, args, content, elapsed in executor.get_remaining_results():
                     if self._logger:
                         self._logger.tool_result(name, content)
-                    yield self._show_tool_result_tu(name, args, content)
+                    yield self._show_tool_result_tu(name, args, content, elapsed)
 
                 # Check for abort after tool execution
                 if self._aborted:
@@ -530,19 +530,24 @@ class Engine:
     # Tool result display
     # ------------------------------------------------------------------
 
-    def _show_tool_result_tu(self, name: str, args: dict[str, Any], result: str) -> tuple:
+    def _show_tool_result_tu(
+        self, name: str, args: dict[str, Any], result: str, elapsed: float = 0,
+    ) -> tuple:
         """Show tool result in terminal (multi-line ⎿ format) and return event tuple."""
         is_err = "Error" in result or "error" in result or "denied" in result.lower()
         if is_err:
             print(term.tool_error(result))
         else:
             print(term.tool_done(result))
+        if elapsed >= 0.1:
+            print(f"  {term._DIM}({elapsed:.1f}s){term._RESET}")
         return ("tool_result", name, args, result)
 
     def _flush_tool_results(self, items: list[tuple[str, str, dict[str, Any], str]]) -> None:
         """Format tool results via provider and append to message list."""
         # Convert to legacy (id, name, content) format for provider
-        legacy = [(tid, name, content) for tid, name, _args, content in items]
+        # items is now (tid, name, args, content, elapsed) — 5-tuple
+        legacy = [(items[i][0], items[i][1], items[i][3]) for i in range(len(items))]
         provider_msgs = self._provider.make_tool_result_messages(legacy)
         self._messages.extend(provider_msgs)
         for msg in provider_msgs:

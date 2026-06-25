@@ -9,11 +9,13 @@ Matches claude-code's StreamingToolExecutor pattern:
 from __future__ import annotations
 
 import json
+import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import Any
 
 from src.llm.provider import ToolUseBlock
 from src.tools.safety import StuckDetector, StaleReadDetector
+from src import terminal as term
 
 
 class StreamingToolExecutor:
@@ -58,6 +60,7 @@ class StreamingToolExecutor:
         self._running_concurrent: set[str] = set()   # ids of running concurrent tools
         self._pending_serial: list[ToolUseBlock] = []  # queued for after-stream
         self._yielded: set[str] = set()              # ids already returned to caller
+        self._start_times: dict[str, float] = {}      # tool_use_id → start time
 
         self._stuck = StuckDetector()
         self._stale = StaleReadDetector()
@@ -115,8 +118,15 @@ class StreamingToolExecutor:
             # Must wait — queue for serial execution later
             self._pending_serial.append(block)
 
-    def get_completed_results(self) -> list[tuple[str, str, dict[str, Any], str]]:
-        """Non-blocking poll: return (tool_use_id, tool_name, arguments, result_content)
+    def _elapsed(self, tid: str) -> float:
+        """Return elapsed seconds since tool started, or 0."""
+        start = self._start_times.get(tid)
+        if start is None:
+            return 0
+        return time.monotonic() - start
+
+    def get_completed_results(self) -> list[tuple[str, str, dict[str, Any], str, float]]:
+        """Non-blocking poll: return (tool_use_id, tool_name, arguments, result, elapsed)
         for any tools that have finished. Marked as yielded so get_remaining_results
         won't return them again."""
         completed = []
@@ -134,13 +144,14 @@ class StreamingToolExecutor:
             self._running_concurrent.discard(tid)
             self._yielded.add(tid)
 
-            completed.append((tid, block.name, block.arguments, content))
+            completed.append((tid, block.name, block.arguments, content, self._elapsed(tid)))
         return completed
 
-    def get_remaining_results(self) -> list[tuple[str, str, dict[str, Any], str]]:
+    def get_remaining_results(self) -> list[tuple[str, str, dict[str, Any], str, float]]:
         """Block until all pending tools finish. Returns results in stream order.
 
         Only returns results that haven't been yielded by get_completed_results().
+        Each result is (tool_use_id, name, args, content, elapsed_seconds).
         """
         # First, wait for any running concurrent tools
         for tid in list(self._running_concurrent):
@@ -152,9 +163,14 @@ class StreamingToolExecutor:
                     content = f"Tool execution error: {exc}"
                 self._results[tid] = content
 
-        # Now run serial tools one at a time
+        # Now run serial tools one at a time with spinner
         for block in self._pending_serial:
+            spinner = term.Spinner()
+            spinner.start()
+            spinner._verb = f"执行 {block.name}"
+            self._start_times[block.id] = time.monotonic()
             content = self._execute_one(block)
+            spinner.stop()
             self._results[block.id] = content
 
         self._pending_serial.clear()
@@ -162,17 +178,19 @@ class StreamingToolExecutor:
 
         # Return results in stream order, excluding already-yielded
         remaining = [
-            (tid, self._blocks[tid].name, self._blocks[tid].arguments, self._results[tid])
+            (tid, self._blocks[tid].name, self._blocks[tid].arguments, self._results[tid],
+             self._elapsed(tid))
             for tid in self._order
             if tid in self._results and tid not in self._yielded
         ]
-        self._yielded.update(tid for tid, _, _, _ in remaining)
+        self._yielded.update(tid for tid, _, _, _, _ in remaining)
         return remaining
 
-    def get_all_results(self) -> list[tuple[str, str, dict[str, Any], str]]:
+    def get_all_results(self) -> list[tuple[str, str, dict[str, Any], str, float]]:
         """Return all results collected so far (doesn't wait for pending)."""
         return [
-            (tid, self._blocks[tid].name, self._blocks[tid].arguments, self._results[tid])
+            (tid, self._blocks[tid].name, self._blocks[tid].arguments, self._results[tid],
+             self._elapsed(tid))
             for tid in self._order
             if tid in self._results
         ]
@@ -207,6 +225,7 @@ class StreamingToolExecutor:
 
     def _start_tool(self, block: ToolUseBlock) -> None:
         """Submit a tool for immediate execution in the thread pool."""
+        self._start_times[block.id] = time.monotonic()
         fut = self._executor.submit(self._execute_one, block)
         self._futures[block.id] = fut
         if block.id not in self._denied:
