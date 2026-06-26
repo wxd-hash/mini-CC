@@ -105,7 +105,14 @@ def run_repl(
                     print("\nGoodbye.")
                     sys.exit(0)
                 last_ctrlc = now
-                print(f"\n{term._YELLOW}Press Ctrl+C again to exit{term._RESET}")
+                print()
+                print(f"{term._YELLOW}Press Ctrl+C again to exit{term._RESET}")
+                # Drain leftover \n from Ctrl+C in input buffer
+                import sys as _sys
+                if _sys.platform == "win32":
+                    import msvcrt as _msvcrt
+                    while _msvcrt.kbhit():
+                        _msvcrt.getch()
                 first = True
                 continue
 

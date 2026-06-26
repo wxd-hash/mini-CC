@@ -105,68 +105,73 @@ def do_resume(
     resume_arg: Any,
 ) -> None:
     """Run the resume flow: find session, show picker, load + print history."""
+    import sys as _sys
     from src.session.logger import list_sessions, load_session_messages, _workspace_dir_name
 
-    session_path: Path | None = None
-
-    if resume_arg is True:
-        sessions = list_sessions(log_dir, workspace)
-        if not sessions:
-            print(term.info("No previous sessions for this workspace."))
-            print(term.info("Starting fresh."))
-            print()
-            return
-
-        _print_session_picker(sessions)
-        try:
-            choice = input(f"\n  {term._BOLD_GREEN}Resume [1-{len(sessions)}] or Enter for fresh >{term._RESET} ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return
-
-        if not choice or choice.lower() in ("q", "n", "fresh"):
-            print(term.info("Starting fresh."))
-            print()
-            return
-
-        try:
-            idx = int(choice) - 1
-            if 0 <= idx < len(sessions):
-                session_path = sessions[idx][0]
-            else:
-                print(term.error(f"Invalid number: {choice}"))
-                print()
-                return
-        except ValueError:
-            # Try matching by session ID prefix
-            needle = choice.lower()
-            matches = [s for s in sessions if s[2].lower().startswith(needle)]
-            if matches:
-                session_path = matches[0][0]
-            else:
-                print(term.error(f"Session not found: {choice}"))
-                print()
-                return
-    else:
-        session_path = Path(resume_arg)
-        if not session_path.is_file():
-            print(term.info(f"Session file not found: {session_path}"))
-            print(term.info("Starting fresh."))
-            print()
-            return
-
     try:
-        messages = load_session_messages(session_path)
-    except Exception as exc:
-        print(term.error(f"Failed to load session: {exc}"))
-        print(term.info("Starting fresh."))
-        print()
-        return
+        session_path: Path | None = None
 
-    _print_history(messages)
-    engine.resume(messages)
-    print(term.success(f"Resumed from {session_path.name} ({len(messages)} messages)"))
-    print()
+        if resume_arg is True:
+            sessions = list_sessions(log_dir, workspace)
+            if not sessions:
+                print(term.info("No previous sessions for this workspace."))
+                print(term.info("Starting fresh."))
+                print()
+                return
+
+            _print_session_picker(sessions)
+            try:
+                choice_input = input(f"\n  {term._BOLD_GREEN}Resume [1-{len(sessions)}] or Enter for fresh >{term._RESET} ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return
+
+            if not choice_input or choice_input.lower() in ("q", "n", "fresh"):
+                print(term.info("Starting fresh."))
+                print()
+                return
+
+            try:
+                idx = int(choice_input) - 1
+                if 0 <= idx < len(sessions):
+                    session_path = sessions[idx][0]
+                else:
+                    print(term.error(f"Invalid number: {choice_input}"))
+                    print()
+                    return
+            except ValueError:
+                needle = choice_input.lower()
+                matches = [s for s in sessions if s[2].lower().startswith(needle)]
+                if matches:
+                    session_path = matches[0][0]
+                else:
+                    print(term.error(f"Session not found: {choice_input}"))
+                    print()
+                    return
+        else:
+            session_path = Path(resume_arg)
+            if not session_path.is_file():
+                print(term.info(f"Session file not found: {session_path}"))
+                print(term.info("Starting fresh."))
+                print()
+                return
+
+        try:
+            messages = load_session_messages(session_path)
+        except Exception as exc:
+            print(term.error(f"Failed to load session: {exc}"))
+            print(term.info("Starting fresh."))
+            print()
+            return
+
+        _print_history(messages)
+        engine.resume(messages)
+        print(term.success(f"Resumed from {session_path.name} ({len(messages)} messages)"))
+        print()
+
+    except KeyboardInterrupt:
+        print()
+        _sys.exit(0)
 
 
 def _print_history(messages: list[dict[str, Any]]) -> None:
