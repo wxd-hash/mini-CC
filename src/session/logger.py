@@ -314,6 +314,26 @@ def load_session_messages(path: Path, max_events: int = MAX_RESUME_EVENTS) -> li
     if len(events) > max_events:
         events = events[-max_events:]
 
+    # Detect format: old SessionLogger uses "type", new SessionStore uses "role"
+    first = events[0] if events else {}
+    if "role" in first and "type" not in first:
+        return _load_from_session_store(events)
+    return _load_from_session_logger(events)
+
+
+def _fmt_tool_args(args: dict[str, Any]) -> str:
+    """Format tool arguments as key='value' pairs (matches live terminal display)."""
+    parts = []
+    for k, v in args.items():
+        s = str(v).replace("\n", "\\n")
+        if len(s) > 60:
+            s = s[:57] + "..."
+        parts.append(f"{k}={s!r}")
+    return ", ".join(parts)
+
+
+def _load_from_session_logger(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Load from legacy SessionLogger format (type-based events)."""
     messages: list[dict[str, Any]] = []
     pending_tools: list[str] = []
 
@@ -338,21 +358,20 @@ def load_session_messages(path: Path, max_events: int = MAX_RESUME_EVENTS) -> li
         elif t == "tool_use":
             name = ev.get("name", "?")
             args = ev.get("args", {})
-            args_str = json.dumps(args, ensure_ascii=False)
+            args_str = _fmt_tool_args(args)
             pending_tools.append(f"{name}({args_str})")
 
         elif t == "tool_result":
             name = ev.get("name", "?")
             content = ev.get("content", "")
-            if len(content) > 500:
+            if len(content) > 300:
                 content = content[:500] + "..."
             if pending_tools:
                 tool_name = pending_tools.pop(0)
                 messages.append({"_type": "tool_call", "content": tool_name})
             is_err = (
                 "error" in content[:50].lower() or "Error" in content[:50]
-                or "denied" in content[:50].lower() or "Denied" in content[:50]
-                or "BLOCKED" in content[:50] or "Permission" in content[:50]
+                or "denied" in content[:50].lower() or "BLOCKED" in content[:50]
             )
             messages.append({
                 "_type": "tool_result",
@@ -362,16 +381,76 @@ def load_session_messages(path: Path, max_events: int = MAX_RESUME_EVENTS) -> li
             })
 
         elif t == "permission_denied":
-            text = ev.get('name', '?')
-            messages.append({"_type": "permission_denied", "content": text})
-
+            messages.append({"_type": "permission_denied", "content": ev.get('name', '?')})
         elif t == "error":
-            text = ev.get('message', '?')
-            messages.append({"_type": "error", "content": text})
+            messages.append({"_type": "error", "content": ev.get('message', '?')})
 
     if pending_tools:
         for tool in pending_tools:
             messages.append({"_type": "tool_call", "content": tool})
+    return messages
+
+
+def _load_from_session_store(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Load from new SessionStore format (role-based messages)."""
+    messages: list[dict[str, Any]] = []
+
+    for ev in events:
+        role = ev.get("role", "")
+        content = ev.get("content", "")
+
+        if role == "user":
+            # Check if content is a tool result list
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                        result = block.get("content", "")[:500]
+                        is_err = block.get("is_error", False)
+                        messages.append({
+                            "_type": "tool_result",
+                            "content": str(result),
+                            "is_error": is_err,
+                        })
+            elif isinstance(content, str):
+                messages.append({"_type": "user_input", "content": content})
+
+        elif role == "assistant":
+            if isinstance(content, list):
+                # Anthropic format: text first, then tool calls (stream order)
+                text_parts = []
+                tool_blocks = []
+                for block in content:
+                    if isinstance(block, dict):
+                        if block.get("type") == "text":
+                            text_parts.append(block.get("text", ""))
+                        elif block.get("type") == "tool_use":
+                            name = block.get("name", "?")
+                            inp = block.get("input", {})
+                            tool_blocks.append(f"{name}({_fmt_tool_args(inp)})")
+                if text_parts:
+                    messages.append({"_type": "assistant_text", "content": "".join(text_parts)})
+                for tb in tool_blocks:
+                    messages.append({"_type": "tool_call", "content": tb})
+            elif isinstance(content, str):
+                # OpenAI format: content is string, tool_calls separate
+                if content.strip():
+                    messages.append({"_type": "assistant_text", "content": content})
+                tool_calls = ev.get("tool_calls", [])
+                for tc in tool_calls:
+                    if isinstance(tc, dict):
+                        name = tc.get("function", {}).get("name", tc.get("name", "?"))
+                        args_raw = tc.get("function", {}).get("arguments", "{}")
+                        try:
+                            args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+                        except json.JSONDecodeError:
+                            args = {}
+                        args_str = _fmt_tool_args(args)
+                        messages.append({"_type": "tool_call", "content": f"{name}({args_str})"})
+
+        elif role == "tool":
+            result = content[:500] if isinstance(content, str) else str(content)[:500]
+            is_err = "error" in result[:50].lower() or "Permission" in result[:50]
+            messages.append({"_type": "tool_result", "content": result, "is_error": is_err})
 
     return messages
 
@@ -506,7 +585,7 @@ def load_session_transcript(path: Path, max_events: int = MAX_RESUME_EVENTS) -> 
         elif t == "tool_result":
             result = ev.get("content", "")
             if len(result) > 300:
-                result = result[:300] + "..."
+                result = result[:500] + "..."
             lines.append(f"[result] {ev.get('name', '?')}: {result}")
         elif t == "permission_denied":
             lines.append(f"[denied] {ev.get('name', '?')}")

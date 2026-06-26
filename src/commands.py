@@ -208,10 +208,11 @@ def _print_history(messages: list[dict[str, Any]]) -> None:
         content = msg.get("content", "")
 
         if msg_type == "user_input":
-            print(f"\n  {term._BOLD_GREEN}>{term._RESET} {content}")
+            print(f"\n\n  {term._BOLD_GREEN}▶ {content}{term._RESET}\n")
 
         elif msg_type == "assistant_text":
-            print(f"\n{content}")
+            from src.agent.loop import render_markdown
+            print(f"\n{render_markdown(content)}")
 
         elif msg_type == "tool_call":
             print(f"  {term._DIM}↳ {term._CYAN}{content}{term._RESET}")
