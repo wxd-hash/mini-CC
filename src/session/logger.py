@@ -409,7 +409,10 @@ def _load_from_session_store(events: list[dict[str, Any]]) -> list[dict[str, Any
         if role == "user":
             if isinstance(content, list):
                 for block in content:
-                    if isinstance(block, dict) and block.get("type") == "tool_result":
+                    if not isinstance(block, dict):
+                        continue
+                    bt = block.get("type", "")
+                    if bt == "tool_result":
                         result = block.get("content", "")[:500]
                         is_err = block.get("is_error", False)
                         messages.append({
@@ -417,6 +420,8 @@ def _load_from_session_store(events: list[dict[str, Any]]) -> list[dict[str, Any
                             "content": str(result),
                             "is_error": is_err,
                         })
+                    elif bt == "text":
+                        messages.append({"_type": "user_input", "content": block.get("text", "")})
             elif isinstance(content, str):
                 messages.append({"_type": "user_input", "content": content})
             elif content is not None:
