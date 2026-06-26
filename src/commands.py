@@ -119,12 +119,30 @@ def do_resume(
                 print()
                 return
 
-            _print_session_picker(sessions)
-            try:
-                choice_input = input(f"\n  {term._BOLD_GREEN}Resume [1-{len(sessions)}] or Enter for fresh >{term._RESET} ").strip()
-            except (EOFError, KeyboardInterrupt):
-                print()
-                return
+            choice_input = ""
+            while not choice_input:
+                _print_session_picker(sessions)
+                try:
+                    choice_input = input(f"\n  {term._BOLD_GREEN}Resume [1-{len(sessions)}] or Enter for fresh >{term._RESET} ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    # Double-press Ctrl+C to exit, any key to re-show picker
+                    import time as _time
+                    _sys.stdout.write(f"\n{term._YELLOW}Press Ctrl+C again to exit, any key to continue{term._RESET}\n")
+                    _sys.stdout.flush()
+                    deadline = _time.monotonic() + 0.8
+                    while _time.monotonic() < deadline:
+                        try:
+                            ch = term._getch()
+                        except KeyboardInterrupt:
+                            _sys.stdout.write("Goodbye.\n")
+                            _sys.exit(0)
+                        if ch == "\x03":
+                            _sys.stdout.write("Goodbye.\n")
+                            _sys.exit(0)
+                        break
+                    _sys.stdout.write("\033[A\033[K\033[A\033[K")
+                    _sys.stdout.flush()
+                    continue  # re-display picker
 
             if not choice_input or choice_input.lower() in ("q", "n", "fresh"):
                 print(term.info("Starting fresh."))

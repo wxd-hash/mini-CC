@@ -105,15 +105,25 @@ def run_repl(
                     print("\nGoodbye.")
                     sys.exit(0)
                 last_ctrlc = now
-                print()
-                print(f"{term._YELLOW}Press Ctrl+C again to exit{term._RESET}")
-                # Drain leftover \n from Ctrl+C in input buffer
-                import sys as _sys
-                if _sys.platform == "win32":
-                    import msvcrt as _msvcrt
-                    while _msvcrt.kbhit():
-                        _msvcrt.getch()
+                sys.stdout.write(f"\n{term._YELLOW}Press Ctrl+C again to exit{term._RESET}\n")
+                sys.stdout.flush()
                 first = True
+                deadline = time.monotonic() + DOUBLE_PRESS_SECONDS
+                while time.monotonic() < deadline:
+                    try:
+                        ch = term._getch()
+                    except KeyboardInterrupt:
+                        sys.stdout.write("Goodbye.\n")
+                        sys.exit(0)
+                    if ch == "\x03":
+                        sys.stdout.write("Goodbye.\n")
+                        sys.exit(0)
+                    # Any other key pressed → cancel, erase warning
+                    break
+                # Erase warning line and the blank line after it
+                sys.stdout.write("\033[A\033[K\033[A\033[K")
+                sys.stdout.flush()
+                last_ctrlc = 0.0
                 continue
 
             last_ctrlc = 0.0
