@@ -98,8 +98,8 @@ class Spinner:
         self._running = False
         if self._thread is not None:
             self._thread.join(timeout=0.5)
-        # Clear the spinner line
-        sys.stdout.write(f"\r{_DIM}✓  已用时 {self.elapsed:.0f}s{_RESET}\n")
+        # Clear spinner line completely, then write completion
+        sys.stdout.write(f"\r\033[K{_DIM}✓  已用时 {self.elapsed:.0f}s{_RESET}\n")
         sys.stdout.flush()
 
     def _run(self) -> None:
@@ -109,7 +109,7 @@ class Spinner:
             self._frame_idx += 1
 
             time_str = f"  ({elapsed:.0f}s)" if elapsed >= _SHOW_TIMER_AFTER else ""
-            line = f"\r{_DIM}{frame}  {self._verb}{time_str}{_RESET}"
+            line = f"\r\033[K{_DIM}{frame}  {self._verb}{time_str}{_RESET}"
             sys.stdout.write(line)
             sys.stdout.flush()
             time.sleep(_SPINNER_FRAME_INTERVAL)

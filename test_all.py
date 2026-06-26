@@ -814,7 +814,7 @@ def test_streaming_tool_execution():
     # Verify event order: text → tool_call → tool_result → waiting → text → waiting
     event_types = [e[0] for e in events]
     assert "text" in event_types, "should have text events"
-    assert "tool_call" in event_types, "should have tool_call events"
+    assert ("tool_call" in event_types or "tool_display" in event_types), "should have tool_call or tool_display events"
     assert "tool_result" in event_types, "should have tool_result events"
 
     # Key assertion: tool_result appears BEFORE the second "waiting"

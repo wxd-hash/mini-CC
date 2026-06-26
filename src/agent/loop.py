@@ -254,7 +254,6 @@ class Engine:
         # the text phase ends (tool_call or end of submit) because streaming
         # API splits markdown patterns across tiny chunks.
         _buf: list[str] = []
-        _waiting = False
         # Buffer for collapsed read-tool display
         _read_count = 0
         _read_names: list[str] = []
@@ -284,18 +283,28 @@ class Engine:
             _read_names.clear()
             _read_results.clear()
 
+        _spinner: term.Spinner | None = None
+
+        def _start_spinner():
+            nonlocal _spinner
+            if _spinner is None and not quiet:
+                _spinner = term.Spinner()
+                _spinner.start()
+
+        def _stop_spinner():
+            nonlocal _spinner
+            if _spinner is not None:
+                _spinner.stop()
+                _spinner = None
+
         for event in self.submit(user_input):
             ev_type = event[0]
 
             if ev_type == "waiting_api":
-                _waiting = True
-                if not quiet:
-                    print(f"\r{term._DIM}⠋ 思考中...{term._RESET}", end="", flush=True)
+                _start_spinner()
                 continue
 
-            if _waiting and not quiet:
-                print("\r\033[K", end="", flush=True)
-                _waiting = False
+            _stop_spinner()
 
             if ev_type == "text":
                 _flush_reads()
@@ -304,7 +313,7 @@ class Engine:
                 _buf.append(chunk)
                 has_output = True
             elif ev_type == "tool_display":
-                # tool_display from non-read tools only — show immediately
+                last_text = ""
                 if not quiet:
                     print(event[1])
             elif ev_type == "tool_call":
@@ -312,6 +321,7 @@ class Engine:
                     print(render_markdown(_flush_buf()))
                 last_text = ""
             elif ev_type == "tool_result":
+                last_text = ""
                 name = event[1]
                 if name in ("read_file", "list_files", "search_files", "git_diff"):
                     _read_count += 1
@@ -329,8 +339,7 @@ class Engine:
                     print(render_markdown(_flush_buf()))
 
         _flush_reads()
-        if _waiting and not quiet:
-            print("\r\033[K", end="", flush=True)
+        _stop_spinner()
         if _buf and not quiet:
             print(render_markdown(_flush_buf()))
 
