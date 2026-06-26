@@ -254,7 +254,11 @@ class Engine:
         # the text phase ends (tool_call or end of submit) because streaming
         # API splits markdown patterns across tiny chunks.
         _buf: list[str] = []
-        _spinner: term.Spinner | None = None
+        _waiting = False
+        # Buffer for collapsed read-tool display
+        _read_count = 0
+        _read_names: list[str] = []
+        _read_results: list[str] = []
 
         def _flush_buf() -> str:
             nonlocal _buf
@@ -264,66 +268,72 @@ class Engine:
             _buf.clear()
             return full
 
-        def _start_spinner() -> None:
-            nonlocal _spinner
-            if not quiet and _spinner is None:
-                _spinner = term.Spinner()
-                _spinner.start()
-
-        def _stop_spinner() -> None:
-            nonlocal _spinner
-            if _spinner is not None:
-                _spinner.stop()
-                _spinner = None
-
-        # Start spinner for initial API wait
-        _start_spinner()
+        def _flush_reads():
+            """Show collapsed summary of completed read tool results."""
+            nonlocal _read_count, _read_names, _read_results
+            if _read_count == 0:
+                return
+            names = list(dict.fromkeys(_read_names))
+            name_list = ", ".join(names[:4])
+            if len(names) > 4:
+                name_list += f", ... (+{len(names) - 4})"
+            summary = f"  {term._GREEN}✓{term._RESET} {term._DIM}Read {_read_count} files ({name_list}){term._RESET}"
+            if not quiet:
+                print(summary)
+            _read_count = 0
+            _read_names.clear()
+            _read_results.clear()
 
         for event in self.submit(user_input):
             ev_type = event[0]
 
             if ev_type == "waiting_api":
-                _start_spinner()
+                _waiting = True
+                if not quiet:
+                    print(f"\r{term._DIM}⠋ 思考中...{term._RESET}", end="", flush=True)
                 continue
 
+            if _waiting and not quiet:
+                print("\r\033[K", end="", flush=True)
+                _waiting = False
+
             if ev_type == "text":
+                _flush_reads()
                 chunk = event[1]
                 last_text += chunk
                 _buf.append(chunk)
                 has_output = True
+            elif ev_type == "tool_display":
+                # tool_display from non-read tools only — show immediately
+                if not quiet:
+                    print(event[1])
             elif ev_type == "tool_call":
-                # Flush buffered text before showing tool header.
-                # Tool executor handles spinner during execution.
-                _stop_spinner()
                 if _buf and not quiet:
-                    print(render_markdown(_flush_buf()), end="", flush=True)
+                    print(render_markdown(_flush_buf()))
                 last_text = ""
             elif ev_type == "tool_result":
-                # Tool result is being printed — stop any remaining spinner
-                _stop_spinner()
+                name = event[1]
+                if name in ("read_file", "list_files", "search_files", "git_diff"):
+                    _read_count += 1
+                    _read_names.append(name)
+                else:
+                    _flush_reads()
+                    if not quiet:
+                        print(event[4])
             elif ev_type == "error":
-                _stop_spinner()
+                _flush_reads()
                 if not quiet:
                     print(term.error(event[1]))
-            elif ev_type == "tool_executing":
-                if not quiet:
-                    _, name, params, activity = event
-                    print(term.tool_running(name, self._fmt_params(params), activity or ""))
             elif ev_type == "waiting":
-                # Text stream done — stop spinner and flush now
-                _stop_spinner()
                 if _buf and not quiet:
-                    print(render_markdown(_flush_buf()), end="", flush=True)
+                    print(render_markdown(_flush_buf()))
 
-        # Flush remaining buffered text at end of response
-        _stop_spinner()
+        _flush_reads()
+        if _waiting and not quiet:
+            print("\r\033[K", end="", flush=True)
         if _buf and not quiet:
-            print(render_markdown(_flush_buf()), end="", flush=True)
+            print(render_markdown(_flush_buf()))
 
-        if has_output and last_text and not quiet:
-            print()
-
-        # Post-turn memory extraction (only for main agent, not sub-agents)
         if not quiet:
             self._extract_memories()
 
@@ -456,8 +466,36 @@ class Engine:
                 full_text = ""
                 tool_uses_seen = False
 
+                # Rebuild system prompt with current permission mode
+                self._system_prompt = build_system_prompt(
+                    workspace_dir=self._workspace_dir,
+                    mode=self._permissions.mode.value,
+                )
+
                 # Signal that we're about to wait for API
                 yield ("waiting_api",)
+
+                _buf_read_tools: list[tuple[str, str, str]] = []  # (name, args_str, activity)
+
+                def _flush_buf() -> str:
+                    """Build display string for buffered read tools, clear buffer."""
+                    nonlocal _buf_read_tools
+                    if not _buf_read_tools:
+                        return ""
+                    result = ""
+                    if len(_buf_read_tools) == 1:
+                        n, a, _act = _buf_read_tools[0]
+                        result = term.tool_call(n, a)
+                    else:
+                        names = [t[0] for t in _buf_read_tools]
+                        desc = f"Read {len(names)} files" if all(n in ("read_file","list_files","search_files","git_diff") for n in names) else f"Called {len(names)} tools"
+                        collapsed = term.tool_calls_collapsed(names, desc)
+                        if collapsed:
+                            result = collapsed
+                        else:
+                            result = "\n".join(term.tool_call(n, a) for n, a, _act in _buf_read_tools)
+                    _buf_read_tools = []
+                    return result
 
                 for stream_event in call_model_with_retry(
                     provider=self._provider,
@@ -474,8 +512,18 @@ class Engine:
                         tool_uses_seen = True
                         tool = self._tools.get(stream_event.name)
                         activity = tool.get_activity_description(**stream_event.arguments) if tool else None
-                        yield ("tool_call", stream_event.name, stream_event.arguments, activity)
-                        print(term.tool_call(stream_event.name, self._fmt_params(stream_event.arguments)))
+                        is_read = tool.is_read_only() if tool else False
+                        args_fmt = self._fmt_params(stream_event.arguments)
+
+                        if is_read:
+                            _buf_read_tools.append((stream_event.name, args_fmt, activity or ""))
+                        else:
+                            buf_display = _flush_buf()
+                            if buf_display:
+                                yield ("tool_display", buf_display)
+                            yield ("tool_call", stream_event.name, stream_event.arguments, activity)
+                            yield ("tool_display", term.tool_call(stream_event.name, args_fmt))
+
                         if self._logger:
                             self._logger.tool_use(stream_event.name, stream_event.arguments)
 
@@ -485,6 +533,9 @@ class Engine:
                         # Poll for any completed results
                         tid = stream_event.id
                         for result_id, name, args, content, elapsed in executor.get_completed_results():
+                            buf_display = _flush_buf()
+                            if buf_display:
+                                yield ("tool_display", buf_display)
                             if self._logger:
                                 self._logger.tool_result(name, content)
                             yield self._show_tool_result_tu(name, args, content, elapsed)
@@ -499,6 +550,9 @@ class Engine:
                     yield ("waiting",)
 
                 # ── Drain remaining tool results ──────────────────────
+                buf_display = _flush_buf()
+                if buf_display:
+                    yield ("tool_display", buf_display)
                 for result_id, name, args, content, elapsed in executor.get_remaining_results():
                     if self._logger:
                         self._logger.tool_result(name, content)
@@ -554,15 +608,12 @@ class Engine:
     def _show_tool_result_tu(
         self, name: str, args: dict[str, Any], result: str, elapsed: float = 0,
     ) -> tuple:
-        """Show tool result in terminal (multi-line ⎿ format) and return event tuple."""
+        """Return tool result event tuple (display handled by run())."""
         is_err = "Error" in result or "error" in result or "denied" in result.lower()
-        if is_err:
-            print(term.tool_error(result))
-        else:
-            print(term.tool_done(result))
+        line = term.tool_done(result) if not is_err else term.tool_error(result)
         if elapsed >= 0.1:
-            print(f"  {term._DIM}({elapsed:.1f}s){term._RESET}")
-        return ("tool_result", name, args, result)
+            line += term.tool_timing(elapsed)
+        return ("tool_result", name, args, result, line)
 
     def _flush_tool_results(self, items: list[tuple[str, str, dict[str, Any], str]]) -> None:
         """Format tool results via provider and append to message list."""

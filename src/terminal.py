@@ -120,59 +120,71 @@ class Spinner:
 # ---------------------------------------------------------------------------
 
 def tool_call(name: str, params: str) -> str:
-    """Tool call header — matches claude-code '↳ ToolName(params)'."""
-    return f"  {_DIM}↳ {_CYAN}{name}{_RESET}{_DIM}({params}){_RESET}"
+    """Tool call (queued) — matches claude-code's ● indicator."""
+    desc = _tool_short_desc(name, params)
+    return f"  {_DIM}● {_BRIGHT}{name}{_RESET}{_DIM}({desc}){_RESET}"
 
 
 def tool_running(name: str, params: str, activity: str = "") -> str:
-    """Tool executing status — returns a line suitable for spinner overlay."""
+    """Tool executing — overwrites previous line with spinner."""
     label = activity or "..."
-    return f"    {_DIM}  ...  {label}{_RESET}"
+    desc = _tool_short_desc(name, params)
+    return f"  {_DIM}⏳ {_BRIGHT}{name}{_RESET}{_DIM}({desc})  {label}{_RESET}"
 
 
-def tool_done(content: str, max_len: int = 200) -> str:
-    """Tool result — multi-line with ⎿ prefix, up to 3 lines.
-
-    Matches claude-code's MessageResponse pattern::
-          ⎿  first line of result
-          ⎿  second line
-          ⎿  ... +N lines
-    """
-    return _format_result(content, max_len, is_error=False)
+def tool_done(result: str, max_len: int = 120) -> str:
+    """Tool completed — result INLINE on same line as tool name (claude-code style)."""
+    first_line = result.split("\n")[0].strip()
+    summary = first_line[:max_len] + "…" if len(first_line) > max_len else first_line
+    return f"  {_GREEN}✓{_RESET} {_DIM}{summary}{_RESET}"
 
 
-def tool_error(content: str, max_len: int = 200) -> str:
-    """Tool error — multi-line with ⎿ prefix, red color."""
-    return _format_result(content, max_len, is_error=True)
+def tool_error(result: str, max_len: int = 120) -> str:
+    """Tool failed — error INLINE on same line."""
+    first_line = result.split("\n")[0].strip()
+    summary = first_line[:max_len] + "…" if len(first_line) > max_len else first_line
+    return f"  {_RED}✗{_RESET} {_RED}{summary}{_RESET}"
 
 
-def _format_result(content: str, max_len: int, is_error: bool) -> str:
-    color = _RED if is_error else _DIM
-    lines = content.split("\n")
-    total = len(lines)
+def tool_timing(elapsed: float) -> str:
+    """Timing label — inline with tool result."""
+    return f" {_DIM}({elapsed:.1f}s){_RESET}"
 
-    # Trim each line
-    trimmed: list[str] = []
-    for line in lines:
-        stripped = line.rstrip()
-        if len(stripped) > max_len:
-            stripped = stripped[:max_len] + "..."
-        trimmed.append(stripped)
 
-    if not trimmed:
-        return f"    {color}⎿  (empty){_RESET}"
+def tool_calls_collapsed(names: list[str], desc: str) -> str:
+    """Collapsed group of read tools (matching claude-code's CollapsedReadSearch)."""
+    if len(names) <= 1:
+        return ""
+    name_list = ", ".join(names[:5])
+    if len(names) > 5:
+        name_list += f", ... (+{len(names) - 5} more)"
+    return f"  {_DIM}● {_CYAN}{desc}{_RESET}{_DIM} ({name_list}){_RESET}"
 
-    # Show at most MAX_RESULT_LINES
-    shown = trimmed[:_MAX_RESULT_LINES]
-    parts = []
-    for line in shown:
-        parts.append(f"    {color}⎿  {line}{_RESET}")
 
-    if total > _MAX_RESULT_LINES:
-        remaining = total - _MAX_RESULT_LINES
-        parts.append(f"    {_DIM}⎿  ... +{remaining} 行{_RESET}")
+def _tool_short_desc(name: str, params: str) -> str:
+    """Build a short human-readable param description for inline display."""
+    if len(params) > 60:
+        params = params[:57] + "..."
+    return params
 
-    return "\n".join(parts)
+
+def shell_command_short(command: str, max_len: int = 120) -> str:
+    first_line = command.split("\n")[0].strip()
+    if len(first_line) <= max_len:
+        return first_line
+    return first_line[:max_len] + "…"
+
+
+def tool_result_multiline(content: str, max_lines: int = 4) -> str:
+    """Multi-line result for verbose display (e.g. /tool command)."""
+    lines = [l.rstrip()[:120] for l in content.split("\n")]
+    if not lines:
+        return f"    {_DIM}(empty){_RESET}"
+    shown = lines[:max_lines]
+    out = "\n".join(f"    {_DIM}{l}{_RESET}" for l in shown)
+    if len(lines) > max_lines:
+        out += f"\n    {_DIM}... +{len(lines) - max_lines} 行{_RESET}"
+    return out
 
 
 # -- Legacy compat aliases ---------------------------------------------------

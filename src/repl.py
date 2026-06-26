@@ -138,7 +138,8 @@ def run_repl(
                 print(term.info(f"Unknown command: /{cmd_name}"))
                 continue
 
-            # Normal query
+            # Normal query — visual separator between input and response
+            print(term.hr())
             engine.run(stripped)
         except (KeyboardInterrupt, AbortedError):
             print()
