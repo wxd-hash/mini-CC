@@ -342,13 +342,11 @@ def _fmt_tool_args(args: dict[str, Any]) -> str:
 
 def _load_from_session_logger(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Load from legacy SessionLogger format (type-based events)."""
-    sys.stderr.write(f"[DEBUG loader] using _load_from_session_logger ({len(events)} events)\n")
     messages: list[dict[str, Any]] = []
     pending_tools: list[str] = []
 
     for ev in events:
         t = ev.get("type", "?")
-        _sys3.stderr.write(f"[DEBUG ev] type={t} has_content={'content' in ev}\n")
         if t == "user_input":
             if pending_tools:
                 for tool in pending_tools:
@@ -403,15 +401,11 @@ def _load_from_session_logger(events: list[dict[str, Any]]) -> list[dict[str, An
 
 def _load_from_session_store(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Load from new SessionStore format (role-based messages)."""
-    import sys as _sys4
-    _sys4.stderr.write(f"[DEBUG loader] using _load_from_session_store ({len(events)} events)\n")
     messages: list[dict[str, Any]] = []
 
     for ev in events:
         role = ev.get("role", "")
         content = ev.get("content", "")
-        import sys as _sys2
-        _sys2.stderr.write(f"[DEBUG ev] role={role} content_type={type(content).__name__} content_len={len(str(content))}\n")
 
         if role == "user":
             if isinstance(content, list):

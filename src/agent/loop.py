@@ -411,6 +411,8 @@ class Engine:
         self._turn_start_len = len(self._messages)
         self._messages.append({"role": "user", "content": user_input})
         self._persist(self._messages[-1])
+        if self._logger:
+            self._logger.user_input(user_input)
 
         try:
             turn_count = 0
