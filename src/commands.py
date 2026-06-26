@@ -221,13 +221,15 @@ def _print_history(messages: list[dict[str, Any]]) -> None:
 # Slash command dispatchers
 # ---------------------------------------------------------------------------
 
-def handle_perm(permission: PermissionChecker, rest: str) -> None:
+def handle_perm(permission: PermissionChecker, rest: str, engine: Any = None) -> None:
     arg = rest.strip()
     if arg == "status":
         print(term.info(f"Permission mode: {permission.mode.value}"))
     elif arg in ("plan", "ask", "auto"):
         permission.mode = Mode(arg)
         print(term.success(f"Permission mode -> {arg}"))
+        if engine:
+            engine.reload()  # rebuild system prompt with plan/ask/auto instructions
     else:
         print(term.info("Usage: /perm <plan|ask|auto|status>"))
 
@@ -349,7 +351,7 @@ def handle_command(
         return True  # caller handles exit
 
     if cmd == "perm":
-        handle_perm(permission, cmd_args)
+        handle_perm(permission, cmd_args, engine)
         return True
 
     if cmd == "tools":

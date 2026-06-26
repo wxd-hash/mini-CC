@@ -412,7 +412,7 @@ class Engine:
                 ):
                     before = len(self._messages)
                     print(term.info("[auto-compacting conversation...]"), flush=True)
-                    system = build_system_prompt(workspace_dir=self._workspace_dir)
+                    system = build_system_prompt(workspace_dir=self._workspace_dir, mode=self._permissions.mode.value)
 
                     try:
                         self._messages = compact_messages(

@@ -56,6 +56,25 @@ MEMORY.md 会被注入到后续所有对话的系统提示中。
 MAX_INSTRUCTIONS_CHARS = 8000
 MEMORY_MAX_CHARS = 6000
 
+PLAN_MODE_PROMPT = """\
+## Plan 模式（只读探索阶段）
+
+你现在处于 Plan 模式——只读探索，不是执行。禁止修改任何文件或执行 shell 命令。
+
+工作流程：
+1. 先用 search_files / list_files 探索项目结构和关键文件
+2. 用 read_file 深入理解相关代码
+3. 用 git_diff 查看已有改动（如果存在）
+4. 分析后给出详细的执行计划（改哪些文件、怎么改、为什么）
+5. 必要时比较多个方案，说明各自的优缺点
+6. 计划呈现后等待用户确认，不要擅自进入实施
+
+输出格式：
+- 先输出「## 分析」说明你发现了什么
+- 再输出「## 计划」说明你打算怎么做，按步骤列出
+- 最后输出「## 风险」说明可能的问题
+- 如果信息不够继续探索，不要猜测"""
+
 
 def _read_text_safe(path: Path) -> str | None:
     """Read a file trying UTF-8 first, then GBK, then UTF-8 replace.
@@ -136,6 +155,7 @@ def build_system_prompt(
     memory_dir: Path | None = None,
     workspace_dir: Path | None = None,
     sessions_dir: Path | None = None,
+    mode: str = "ask",
 ) -> str:
     """Build the full system prompt: base + instructions + memory + skills.
 
@@ -144,7 +164,9 @@ def build_system_prompt(
     # Backward compat: workspace_dir takes precedence, fall back to cwd
     if workspace_dir is None:
         workspace_dir = Path(cwd) if cwd else Path.cwd()
-    ws = workspace_dir.resolve() if isinstance(workspace_dir, str) else workspace_dir.resolve()
+    if isinstance(workspace_dir, str):
+        workspace_dir = Path(workspace_dir)
+    ws = workspace_dir.resolve()
 
     # Memory path
     if memory_dir:
@@ -161,6 +183,10 @@ def build_system_prompt(
         memory_dir=mem_dir_str,
     )
     parts = [base]
+
+    # Plan mode — inject exploration prompt, rebuilds on /perm plan
+    if mode == "plan":
+        parts.append(PLAN_MODE_PROMPT)
 
     # Project instructions (CLAUDE.md hierarchy)
     instructions = load_project_instructions(ws)
