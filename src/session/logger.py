@@ -405,6 +405,8 @@ def _load_from_session_store(events: list[dict[str, Any]]) -> list[dict[str, Any
     for ev in events:
         role = ev.get("role", "")
         content = ev.get("content", "")
+        import sys as _sys2
+        _sys2.stderr.write(f"[DEBUG ev] role={role} content_type={type(content).__name__} content_len={len(str(content))}\n")
 
         if role == "user":
             if isinstance(content, list):
