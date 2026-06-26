@@ -18,6 +18,7 @@ Commands:
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -203,12 +204,18 @@ def _print_history(messages: list[dict[str, Any]]) -> None:
       permission_denied / error → red
     """
     print(term.hr())
+    # Diagnostic
+    from collections import Counter
+    counts = Counter(m.get("_type", "?") for m in messages)
+    sys.stderr.write(f"[DEBUG] session messages: {dict(counts)}\n")
     for msg in messages:
         msg_type = msg.get("_type", "")
         content = msg.get("content", "")
 
         if msg_type == "user_input":
-            print(f"\n\n  {term._BOLD_GREEN}▶ {content}{term._RESET}\n")
+            types_seen["user"] = types_seen.get("user", 0) + 1
+            sys.stdout.write(f"\n\n  {term._BOLD_GREEN}▶ {content}{term._RESET}\n")
+            sys.stdout.flush()
 
         elif msg_type == "assistant_text":
             from src.agent.loop import render_markdown

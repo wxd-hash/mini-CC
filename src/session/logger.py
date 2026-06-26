@@ -315,9 +315,16 @@ def load_session_messages(path: Path, max_events: int = MAX_RESUME_EVENTS) -> li
         events = events[-max_events:]
 
     # Detect format: old SessionLogger uses "type", new SessionStore uses "role"
-    first = events[0] if events else {}
-    if "role" in first and "type" not in first:
+    if not events:
+        return []
+    first = events[0]
+    # SessionLogger starts with type="session_start"
+    # SessionStore entries always have role
+    if first.get("type") == "session_start":
+        return _load_from_session_logger(events)
+    if "role" in first:
         return _load_from_session_store(events)
+    # Fallback: try both
     return _load_from_session_logger(events)
 
 
@@ -400,7 +407,6 @@ def _load_from_session_store(events: list[dict[str, Any]]) -> list[dict[str, Any
         content = ev.get("content", "")
 
         if role == "user":
-            # Check if content is a tool result list
             if isinstance(content, list):
                 for block in content:
                     if isinstance(block, dict) and block.get("type") == "tool_result":
@@ -413,6 +419,8 @@ def _load_from_session_store(events: list[dict[str, Any]]) -> list[dict[str, Any
                         })
             elif isinstance(content, str):
                 messages.append({"_type": "user_input", "content": content})
+            elif content is not None:
+                messages.append({"_type": "user_input", "content": str(content)})
 
         elif role == "assistant":
             if isinstance(content, list):
@@ -432,8 +440,7 @@ def _load_from_session_store(events: list[dict[str, Any]]) -> list[dict[str, Any
                 for tb in tool_blocks:
                     messages.append({"_type": "tool_call", "content": tb})
             elif isinstance(content, str):
-                # OpenAI format: content is string, tool_calls separate
-                if content.strip():
+                if content and content.strip():
                     messages.append({"_type": "assistant_text", "content": content})
                 tool_calls = ev.get("tool_calls", [])
                 for tc in tool_calls:
