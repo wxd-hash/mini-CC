@@ -219,6 +219,12 @@ class PermissionChecker:
                 if not sanitized:
                     return "deny"  # nothing left after sanitization
 
+        # CLAUDE.md maintenance — always auto-allow, same as memory
+        if tool_name in ("write_file", "edit_file"):
+            path = tool_input.get("path", "")
+            if path.endswith("CLAUDE.md") or path.endswith("CLAUDE.local.md"):
+                return "allow"
+
         # Auto-approve flag bypasses everything
         if self.auto_approve:
             return "allow"
