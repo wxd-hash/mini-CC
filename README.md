@@ -9,7 +9,7 @@
 - **Agent 工具循环** — while True 状态机模式，无硬性轮次上限
 - **流式工具执行** — 模型还在输出时，只读工具就开始后台运行；文本流和工具执行并行重叠，大幅降低感知延迟
 - **并行工具执行** — 只读工具（read/search/list）ThreadPoolExecutor 并行批处理，写入工具串行
-- **自动压缩** — token 阈值触发（非消息数），circuit breaker 防重复压缩
+- **智能上下文压缩** — 五层压缩（Snip / Micro / Collapse / Auto / Reactive），选择性白名单 + 时间屏蔽 + 结果预算 + 结构化摘要，不丢关键信息
 - **重试机制** — 指数退避 + jitter，最多 10 次重试，自动处理限流/超时/上下文溢出
 - **7 个工具** — read_file, write_file, edit_file, list_files, search_files, git_diff, run_shell
 - **流式输出** — 实时逐字显示，不用等完整生成
@@ -21,6 +21,8 @@
 - **Skills 系统** — 内建 /review, /commit, /test, /simplify 技能
 - **Plan 模式** — 子 agent 探索代码库后再实施
 - **多源配置** — CLI 参数 > 环境变量 > TOML 文件
+- **/init 命令** — 自动分析项目并生成 CLAUDE.md，后续对话无感维护
+- **CLAUDE.md 层级** — 从工作目录向上递归加载，自动注入系统提示
 
 ## 快速开始
 
@@ -140,6 +142,7 @@ python main.py
 | `/compact` | 手动压缩对话 |
 | `/history` | 查看历史会话 |
 | `/resume [编号]` | 恢复会话 |
+| `/init` | 分析项目并创建/更新 CLAUDE.md |
 | `/skills` | 列出可用技能 |
 | `/review` | 代码审查 |
 | `/commit` | 创建 git commit |
