@@ -90,9 +90,17 @@ Then add a pointer to MEMORY.md: `- [Title](file.md) — one-line hook`
 
 {what_not_to_save}
 
+## CLAUDE.md maintenance
+
+If a CLAUDE.md exists in the workspace root, also check whether the conversation
+revealed new project knowledge that should go there: non-obvious commands,
+architecture decisions, testing conventions, gotchas, code style rules.
+Update it via edit_file if needed. CLAUDE.md is injected into every session's
+system prompt — keep it concise and project-specific, not generic.
+
 ## Strategy
-Turn 1: read existing MEMORY.md and any files you might update (parallel reads)
-Turn 2: write new/updated memory files + update MEMORY.md index (parallel writes)
+Turn 1: read MEMORY.md, any existing memory files, and CLAUDE.md (parallel reads)
+Turn 2: write new/updated memory files + update MEMORY.md index + update CLAUDE.md if needed (parallel writes)
 Do NOT waste turns investigating — only use conversation content above.
 """
 

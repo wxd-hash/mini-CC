@@ -19,7 +19,7 @@ from typing import Any, Iterator
 from src.agent.retry import call_model_with_retry
 from src.agent.tool_executor import StreamingToolExecutor
 from src.config import MAX_TOOL_ROUNDS, KEEP_RECENT_MESSAGES
-from src.context import build_system_prompt, compact_messages, micro_compact
+from src.context import build_system_prompt, compact_messages, micro_compact, apply_tool_result_budget
 from src.llm.provider import LLMProvider, TextDelta, ToolUseBlock, StreamEnd
 from src.security.permission import PermissionChecker
 from src.session.logger import SessionLogger, SessionStore
@@ -232,6 +232,9 @@ class Engine:
     # ------------------------------------------------------------------
 
     def _persist(self, message: dict[str, Any]) -> None:
+        """Tag message with timestamp for time-based microcompact, then persist."""
+        import time as _time
+        message["_ts"] = _time.monotonic()
         if self._session_store is not None:
             try:
                 self._session_store.append_message(message)
@@ -425,6 +428,11 @@ class Engine:
                     raise AbortedError()
 
                 # ── STEP 1: Microcompact ──────────────────────────────
+                # Tool result budget: cap large outputs before compaction
+                limits = {name: t.maxResultSizeChars for name, t in self._tools.items()
+                         if t.maxResultSizeChars is not None}
+                if limits:
+                    self._messages = apply_tool_result_budget(self._messages, limits)
                 self._messages = micro_compact(self._messages, keep_recent=12)
 
                 # ── STEP 2: Auto-compact ──────────────────────────────

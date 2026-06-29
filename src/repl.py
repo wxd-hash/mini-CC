@@ -37,7 +37,7 @@ def print_banner(provider, session_store, workspace, permission) -> None:
         term.banner_line("Workspace", str(workspace.root)),
         term.banner_line("Mode", permission.mode.value),
         hr_fixed,
-        term.info("/tools  /perm  /skills  /history  /clear  /reload  /exit"),
+        term.info("/tools  /perm  /skills  /init  /history  /clear  /reload  /exit"),
     ]
 
     while len(cat) < len(info):

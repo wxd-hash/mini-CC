@@ -19,6 +19,7 @@ class RunShell(Tool):
 
     TIMEOUT = 30
     MAX_OUTPUT = 12000
+    MAX_RESULT_CHARS = 30_000  # matches claude-code BashTool
 
     def __init__(self, workspace_dir: Path) -> None:
         self._ws = workspace_dir.resolve()
@@ -62,6 +63,10 @@ class RunShell(Tool):
             },
             "required": ["command"],
         }
+
+    @property
+    def maxResultSizeChars(self) -> int:
+        return self.MAX_RESULT_CHARS
 
     # -- cc-mini protocol --------------------------------------------------
 

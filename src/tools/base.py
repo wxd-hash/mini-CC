@@ -49,6 +49,16 @@ class Tool(ABC):
 
     # -- new methods matching cc-mini Tool protocol ---------------------------
 
+    @property
+    def maxResultSizeChars(self) -> int | None:
+        """Maximum characters for this tool's result in the message history.
+
+        None = no limit (result always stays inline). Results exceeding this
+        are moved to a temp file and replaced with a preview + path reference.
+        Default: None (no limit). Matches claude-code's maxResultSizeChars.
+        """
+        return None
+
     def is_read_only(self) -> bool:
         """Return True if this tool never mutates state.
 

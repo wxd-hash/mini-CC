@@ -13,9 +13,14 @@ class GitDiff(Tool):
     """Show git diff of working-tree or staged changes."""
 
     MAX_OUTPUT = 12000
+    MAX_RESULT_CHARS = 20_000
 
     def __init__(self, workspace_dir: Path) -> None:
         self._ws = workspace_dir.resolve()
+
+    @property
+    def maxResultSizeChars(self) -> int:
+        return self.MAX_RESULT_CHARS
 
     # ------------------------------------------------------------------
     # Tool metadata

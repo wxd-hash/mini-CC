@@ -4,6 +4,7 @@ Commands:
   /perm <plan|ask|auto|status>  — permission mode
   /tools                        — list tools
   /tool <name> <json_args>      — manual tool invocation
+  /init                         — create/update CLAUDE.md
   /clear                        — clear conversation
   /reload                       — rebuild system prompt
   /compact                      — compact conversation
@@ -98,6 +99,57 @@ def _print_session_picker(sessions: list) -> None:
 # ---------------------------------------------------------------------------
 # Resume
 # ---------------------------------------------------------------------------
+
+def _handle_init(engine: Any, cmd_args: str) -> bool:
+    """Handle /init command — launch model to analyze codebase and create CLAUDE.md.
+
+    Matches claude-code's OLD_INIT_PROMPT exactly: sends a specialized prompt
+    telling the model to survey the project and write CLAUDE.md.
+    """
+    from pathlib import Path
+
+    ws = getattr(engine, '_workspace_dir', None) or Path.cwd()
+    ws = Path(ws)
+    claude_md = ws / "CLAUDE.md"
+    exists = claude_md.exists()
+    action = "suggest improvements to" if exists else "create"
+
+    prompt = (
+        f"Please analyze this codebase and {action} a CLAUDE.md file, "
+        f"which will be given to future instances to operate in this repository.\n\n"
+        f"What to add:\n"
+        f"1. Commands that will be commonly used, such as how to build, lint, "
+        f"and run tests. Include the necessary commands to develop in this "
+        f"codebase, such as how to run a single test.\n"
+        f"2. High-level code architecture and structure so that future instances "
+        f"can be productive more quickly. Focus on the 'big picture' architecture "
+        f"that requires reading multiple files to understand.\n\n"
+        f"Usage notes:\n"
+        f"- When you make the initial CLAUDE.md, do not repeat yourself and do not "
+        f"include obvious instructions like 'Provide helpful error messages to users', "
+        f"'Write unit tests for all new utilities', 'Never include sensitive "
+        f"information in code or commits'.\n"
+        f"- Avoid listing every component or file structure that can be easily discovered.\n"
+        f"- Don't include generic development practices.\n"
+        f"- If there is a README.md, make sure to include the important parts.\n"
+        f"- Do not make up information such as 'Common Development Tasks', "
+        f"'Tips for Development', 'Support and Documentation' unless this is "
+        f"expressly included in other files that you read.\n"
+        f"- Be sure to prefix the file with the following text:\n\n"
+        f"```\n"
+        f"# CLAUDE.md\n\n"
+        f"This file provides guidance to Claude Code (claude.ai/code) when "
+        f"working with code in this repository.\n"
+        f"```\n\n"
+        f"用中文写 CLAUDE.md 的内容，但保留上面的英文前缀。"
+    )
+
+    print(term.hr())
+    print(term.info(f"正在分析项目并{action.replace('suggest improvements to', '更新').replace('create', '创建')} CLAUDE.md..."))
+    print(term.hr())
+    engine.run(prompt)
+    return True
+
 
 def do_resume(
     engine: Any,
@@ -375,6 +427,9 @@ def handle_command(
 
     if cmd in ("exit", "quit"):
         return True  # caller handles exit
+
+    if cmd == "init":
+        return _handle_init(engine, cmd_args)
 
     if cmd == "perm":
         handle_perm(permission, cmd_args, engine)

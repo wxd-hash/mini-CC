@@ -50,6 +50,9 @@ MEMORY.md 会被注入到后续所有对话的系统提示中。
 - 不要连续 3 次读同一个文件不修改
 - 危险操作要谨慎
 - 改完用 git_diff 总结所有变更
+- 如果你在对话中发现了新的项目约定、命令、陷阱或架构决策，
+  用 edit_file 无感更新 CLAUDE.md——就像维护记忆一样，不需要特别告知用户。
+  只写 Claude 不知道会出错的内容，不要写明显的或通用的规则
 
 ## 输出规范
 - 第一次工具调用前，一句话说一下你要做什么。执行中途，卡点时简短更新进度。
@@ -215,6 +218,16 @@ def build_system_prompt(
     instructions = load_project_instructions(ws)
     if instructions:
         parts.append(f"<project_instructions>\n{instructions}\n</project_instructions>")
+    else:
+        # No CLAUDE.md yet — tell the model it can create one
+        claude_md_path = ws / "CLAUDE.md"
+        parts.append(
+            f"<project_instructions>\n"
+            f"No CLAUDE.md found at {claude_md_path}. Run /init to auto-generate one, "
+            f"or use edit_file/write_file to create it yourself. CLAUDE.md is injected "
+            f"into every session — put project conventions, commands, and gotchas there.\n"
+            f"</project_instructions>"
+        )
 
     # KAIROS memory
     memory = load_memory(memory_dir)
@@ -230,55 +243,152 @@ def build_system_prompt(
 
 COMPACT_SYSTEM_PROMPT = """\
 You are a conversation summarizer. Summarize the conversation segment below.
-Include these sections:
 
 ## User Goal
-(What the user asked for)
+What the user asked for and what should be accomplished.
 
-## Files Read
-(Files that were read)
+## Files & Project
+- Files that were read, with key findings (e.g. "app.py: Flask app with 3 routes")
+- Files that were modified/created (e.g. "models.py: added email field to User")
+- Files that were searched and why
 
-## Files Modified
-(Files that were modified/created)
+## Commands & Results
+Shell commands executed and their outcomes. Only include commands whose
+results are still relevant — skip transient commands like `ls` or `mkdir`.
 
-## Commands Run
-(Shell commands that were executed and their results)
+## Errors & Fixes
+Any errors encountered and how they were resolved. Include file:line references.
 
-## Current Issues
-(Any unresolved issues)
+## Current State
+What's working now. What's still broken or unresolved. Any decisions made.
 
-## Next Steps
-(Recommended next steps)
+## Project Structure
+Key facts about the codebase learned in this segment: entry points,
+framework used, database type, test runner, config format, etc.
 
-Be concise."""
+Be specific with paths and values. Don't just say "fixed a bug" — say what was
+wrong and what change fixed it. Prefer bullet points over paragraphs."""
+
+
+# Tools whose results can be compacted (matches claude-code COMPACTABLE_TOOLS)
+_COMPACTABLE_TOOLS = {
+    "read_file", "list_files", "search_files", "git_diff",
+    "run_shell", "write_file", "edit_file",
+}
+
+
+def apply_tool_result_budget(
+    messages: list[dict[str, Any]],
+    tool_limits: dict[str, int],
+) -> list[dict[str, Any]]:
+    """Apply per-tool maxResultSizeChars before microcompact.
+
+    Matches claude-code's applyToolResultBudget: large results are moved to
+    temp files, and the message content is replaced with a preview + path.
+    Tools without a limit are never affected.
+    """
+    import tempfile, os
+    persisted_dir = None
+
+    for msg in messages:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        tool_name = msg.get("_tool_name", "")
+        limit = tool_limits.get(tool_name) if tool_name else None
+        if limit is None:
+            continue
+
+        # Anthropic format: content is a list of blocks
+        if role == "user" and isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    _budget_block(block, limit, tool_name)
+        # OpenAI format: content is a string
+        elif role == "tool" and isinstance(content, str):
+            msg["content"] = _budget_string(content, limit, tool_name)
+
+    return messages
+
+
+def _budget_block(block: dict[str, Any], limit: int, tool_name: str) -> None:
+    raw = block.get("content", "")
+    if not isinstance(raw, str) or len(raw) <= limit:
+        return
+    preview = raw[:2000]
+    block["content"] = (
+        f"<persisted-output>\n"
+        f"Tool {tool_name} returned {len(raw)} chars (limit: {limit}).\n"
+        f"Preview (first 2000 chars):\n{preview}\n"
+        f"... [{len(raw) - 2000} more chars truncated]\n"
+        f"</persisted-output>"
+    )
+
+
+def _budget_string(raw: str, limit: int, tool_name: str) -> str:
+    if len(raw) <= limit:
+        return raw
+    preview = raw[:2000]
+    return (
+        f"<persisted-output>\n"
+        f"Tool {tool_name} returned {len(raw)} chars (limit: {limit}).\n"
+        f"Preview (first 2000 chars):\n{preview}\n"
+        f"... [{len(raw) - 2000} more chars truncated]\n"
+        f"</persisted-output>"
+    )
 
 
 def micro_compact(
     messages: list[dict[str, Any]],
-    keep_recent: int = 6,
+    keep_recent: int = 8,
+    protected_window_s: float = 30.0,
 ) -> list[dict[str, Any]]:
-    """Truncate old tool results in-place — zero cost, no API call.
+    """Selective microcompact — matches claude-code's approach.
 
-    Only messages beyond *keep_recent* are affected. Tool-result content
-    is replaced with ``[content truncated]``, keeping the structure intact.
+    Only compacts tools in _COMPACTABLE_TOOLS. Agent/Plan/Memory tool
+    results are NEVER truncated.
+
+    Uses time-based protection: messages within protected_window_s seconds
+    of the most recent message are fully preserved, regardless of count.
+    This matches claude-code's time-based MC config.
     """
     if len(messages) <= keep_recent:
         return messages
 
-    for i in range(len(messages) - keep_recent):
+    # Time-based protection tail: don't compact recent messages
+    import time as _time
+    now = _time.monotonic()
+    protected_count = 0
+    for msg in reversed(messages):
+        ts = msg.get("_ts", 0)
+        if ts and now - ts < protected_window_s:
+            protected_count += 1
+        else:
+            break
+    protected_count = max(protected_count, keep_recent)
+
+    for i in range(len(messages) - protected_count):
         msg = messages[i]
         role = msg.get("role", "")
         content = msg.get("content")
 
-        # Anthropic: tool_results live inside a user message's content block list
+        # Anthropic: tool_results in user message content blocks
         if role == "user" and isinstance(content, list):
             for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_result":
-                    block["content"] = "[content truncated]"
+                if not isinstance(block, dict):
+                    continue
+                # Only compact whitelisted tools
+                tool_name = block.get("_tool_name", "")
+                if tool_name and tool_name not in _COMPACTABLE_TOOLS:
+                    continue
+                if block.get("type") == "tool_result":
+                    block["content"] = "[Old tool result content cleared]"
 
-        # OpenAI: tool results are standalone role="tool" messages
+        # OpenAI: standalone tool messages
         elif role == "tool" and isinstance(content, str):
-            msg["content"] = "[content truncated]"
+            tool_name = msg.get("_tool_name", "")
+            if tool_name and tool_name not in _COMPACTABLE_TOOLS:
+                continue
+            msg["content"] = "[Old tool result content cleared]"
 
     return messages
 

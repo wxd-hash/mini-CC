@@ -67,8 +67,14 @@ def safe_path(path_str: str, workspace_dir: Path | None = None) -> Path:
 class FileEditTool(Tool):
     """Edit a file by exact string replacement (matches claude-code's FileEditTool)."""
 
+    MAX_RESULT_CHARS = 5_000
+
     def __init__(self, workspace_dir: Path) -> None:
         self._ws = workspace_dir.resolve()
+
+    @property
+    def maxResultSizeChars(self) -> int:
+        return self.MAX_RESULT_CHARS
 
     @property
     def name(self) -> str:
@@ -160,9 +166,14 @@ class ReadFile(Tool):
     """Read the contents of a workspace file."""
 
     MAX_CHARS = 12000
+    MAX_RESULT_CHARS = 80_000  # matches claude-code FileReadTool
 
     def __init__(self, workspace_dir: Path) -> None:
         self._ws = workspace_dir.resolve()
+
+    @property
+    def maxResultSizeChars(self) -> int:
+        return self.MAX_RESULT_CHARS
 
     @property
     def name(self) -> str:
@@ -216,8 +227,14 @@ class ReadFile(Tool):
 class WriteFile(Tool):
     """Write content to a workspace file."""
 
+    MAX_RESULT_CHARS = 5_000
+
     def __init__(self, workspace_dir: Path) -> None:
         self._ws = workspace_dir.resolve()
+
+    @property
+    def maxResultSizeChars(self) -> int:
+        return self.MAX_RESULT_CHARS
 
     @property
     def name(self) -> str:
@@ -267,9 +284,14 @@ class ListFiles(Tool):
     """List files in a workspace directory."""
 
     MAX_ENTRIES = 200
+    MAX_RESULT_CHARS = 8_000
 
     def __init__(self, workspace_dir: Path) -> None:
         self._ws = workspace_dir.resolve()
+
+    @property
+    def maxResultSizeChars(self) -> int:
+        return self.MAX_RESULT_CHARS
 
     @property
     def name(self) -> str:
@@ -336,9 +358,14 @@ class SearchFiles(Tool):
 
     MAX_RESULTS = 100
     MAX_LINE_CHARS = 300
+    MAX_RESULT_CHARS = 12_000
 
     def __init__(self, workspace_dir: Path) -> None:
         self._ws = workspace_dir.resolve()
+
+    @property
+    def maxResultSizeChars(self) -> int:
+        return self.MAX_RESULT_CHARS
 
     @property
     def name(self) -> str:

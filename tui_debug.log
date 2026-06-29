@@ -1,0 +1,4 @@
+2026-06-29 14:20:13,868 DEBUG Using proactor: IocpProactor
+2026-06-29 14:20:13,925 INFO on_mount start
+2026-06-29 14:20:13,926 INFO banner ok
+TUI flag check: use_tui=False, args.tui=False, no_tui=True
