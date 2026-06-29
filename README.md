@@ -18,7 +18,7 @@
 - **双 LLM 后端** — DeepSeek + OpenAI 兼容协议
 - **系统提示** — 全中文，内置 Shell 防循环规则
 - **KAIROS 记忆** — 子 Agent 自动提取 + 独立文件存储 + frontmatter + MEMORY.md 索引
-- **Skills 系统** — 内建 /review, /commit, /test, /simplify 技能
+- **Skills 系统** — SKILL.md 文件自动发现 + frontmatter + 参考文件；内建 /review /commit /test /simplify
 - **Plan 模式** — 子 agent 探索代码库后再实施
 - **多源配置** — CLI 参数 > 环境变量 > TOML 文件
 - **/init 命令** — 自动分析项目并生成 CLAUDE.md，后续对话无感维护

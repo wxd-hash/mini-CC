@@ -376,18 +376,33 @@ base_url = "https://api.deepseek.com/v1"
 
 ## 十一、Skills 技能系统
 
-Skills 是可复用的工作流，本质上是一段预设的提示词，提交给模型执行。
+Skills 参考了 Claude Code 的 SKILL.md 架构——不只是提示词注入。
 
 ### 11.1 内建 Skills
 
-- `/review` — 代码审查：自动 git diff，检查 bug、安全隐患、可改进的代码
-- `/commit` — 提交代码：分析变更 → 生成 commit message → git add → git commit
-- `/test` — 运行测试：找到测试文件 → 运行 pytest → 报告结果
-- `/simplify` — 代码优化：git diff → 找重复代码、过于复杂的逻辑 → 简化
+- `/review` — 代码审查：git diff → 检查 bug/安全/可改进处
+- `/commit` — 提交代码：生成 commit message → git add → git commit
+- `/test` — 运行测试：找到测试文件 → pytest → 报告
+- `/simplify` — 代码优化：git diff → 找重复/过度复杂 → 简化
 
-### 11.2 自定义 Skills
+### 11.2 自定义 Skills（SKILL.md）
 
-可以在 `~/.mini-claude/skills/` 或 `./.mini-claude/skills/` 下放 `.py` 文件来添加自定义技能。
+在项目目录或用户目录下创建 SKILL.md 文件即可注册新 skill。支持 YAML frontmatter 设定名称和描述：
+
+```
+.claude/skills/my-review/SKILL.md:
+---
+name: my-review
+description: 用中文做代码审查
+---
+用中文审查当前变更，关注性能和安全。
+```
+
+skill 目录下的任何其他文件（如 reference.md、example.py）会自动加载到 prompt 作为参考内容。`/my-review` 直接可用。
+
+**搜索路径**：
+- 项目级：`./.claude/skills/<name>/SKILL.md`
+- 用户级：`~/.claude/skills/<name>/SKILL.md`
 
 ---
 
