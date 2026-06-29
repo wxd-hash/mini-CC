@@ -288,14 +288,21 @@ class PermissionChecker:
         self._deny_msg(tool_name)
         return "deny"
 
+    # Internal tools that are always allowed (matching claude-code)
+    _INTERNAL_TOOLS = {"ask_user", "todo_write", "todo_update"}
+
     def _check_ask(self, tool_name: str, tool_input: dict[str, Any]) -> str:
-        if tool_name in ("read_file", "list_files", "search_files", "git_diff"):
+        if tool_name in self._INTERNAL_TOOLS:
+            return "allow"
+        if tool_name in ("read_file", "list_files", "search_files", "git_diff", "web_fetch"):
             return "allow"
         result = self._prompt(tool_name, tool_input)
         return "allow" if result else "deny"
 
     def _check_auto(self, tool_name: str, tool_input: dict[str, Any]) -> str:
-        if tool_name in ("read_file", "list_files", "write_file", "edit_file", "search_files", "git_diff"):
+        if tool_name in self._INTERNAL_TOOLS:
+            return "allow"
+        if tool_name in ("read_file", "list_files", "write_file", "edit_file", "search_files", "git_diff", "web_fetch"):
             return "allow"
         if tool_name == "run_shell":
             if self._is_high_risk(tool_input.get("command", "")):
