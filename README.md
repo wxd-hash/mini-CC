@@ -11,7 +11,7 @@
 - **并行工具执行** — 只读工具（read/search/list）ThreadPoolExecutor 并行批处理，写入工具串行
 - **智能上下文压缩** — 五层压缩（Snip / Micro / Collapse / Auto / Reactive），选择性白名单 + 时间屏蔽 + 结果预算 + 结构化摘要，不丢关键信息
 - **重试机制** — 指数退避 + jitter，最多 10 次重试，自动处理限流/超时/上下文溢出
-- **7 个工具** — read_file, write_file, edit_file, list_files, search_files, git_diff, run_shell
+- **11 个工具** — read_file, write_file, edit_file, list_files, search_files, git_diff, run_shell, web_fetch, ask_user, todo_write, todo_update
 - **流式输出** — 实时逐字显示，不用等完整生成
 - **双层权限系统** — 自杀防护（taskkill /IM python 永不允许）+ 高危命令检测 + 键盘菜单确认
 - **会话持久化** — SessionStore 自动保存，按 workspace 组织，支持 --resume 恢复
@@ -180,6 +180,10 @@ python main.py
 | `search_files` | `query`, `path` (可选) | 搜索文件内容，优先用 ripgrep |
 | `git_diff` | `path` (可选), `staged` (可选) | git 差异（只读） |
 | `run_shell` | `command`, `run_in_background?`, `timeout?` | 执行 shell 命令 |
+| `web_fetch` | `url`, `prompt` | 获取网页内容提取信息 |
+| `ask_user` | `question`, `header`, `options` | 向用户提问选择 |
+| `todo_write` | `tasks` | 拆分跟踪复杂任务 |
+| `todo_update` | `updates` | 更新任务状态 |
 
 ### run_shell 特性
 
