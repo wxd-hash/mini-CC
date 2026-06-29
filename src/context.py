@@ -273,8 +273,9 @@ wrong and what change fixed it. Prefer bullet points over paragraphs."""
 # Tools whose results can be compacted (matches claude-code COMPACTABLE_TOOLS)
 _COMPACTABLE_TOOLS = {
     "read_file", "list_files", "search_files", "git_diff",
-    "run_shell", "write_file", "edit_file",
+    "run_shell", "write_file", "edit_file", "web_fetch",
 }
+# NOT compactable (always preserved): ask_user, todo_write, todo_update
 
 
 def apply_tool_result_budget(
