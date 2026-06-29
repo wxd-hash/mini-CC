@@ -385,9 +385,9 @@ def handle_skill_command(skill_name: str, args: str, engine: Any) -> None:
         print(term.info("Type /skills to see available skills."))
         return
 
-    prompt = skill.run(args)
-    if prompt is None:
-        print(term.info(f"Skill /{skill_name} produced no prompt."))
+    prompt = skill.get_prompt(args)
+    if not prompt:
+        print(term.info(f"Skill /{skill_name} has no prompt content."))
         return
 
     print(term.info(f"Running skill: /{skill_name}"))

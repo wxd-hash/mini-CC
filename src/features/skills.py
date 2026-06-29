@@ -1,109 +1,169 @@
-"""Skills system — matches cc-mini's plugin-based skill loader.
+"""Skills system — matches claude-code's skill architecture.
 
 Skills are discovered from:
 1. Built-in (skills_bundled.py) — registered at startup.
-2. Project-level: {cwd}/.mini-claude/skills/
-3. User-level: ~/.mini-claude/skills/
+2. Project-level: {cwd}/.claude/skills/<name>/SKILL.md
+3. User-level: ~/.claude/skills/<name>/SKILL.md
 
-Each skill is a function with metadata: name, description, handler.
+Each skill is a SKILL.md file with YAML frontmatter:
+  ---
+  name: my-skill
+  description: What this skill does
+  ---
+  The actual skill prompt content...
 """
 
 from __future__ import annotations
 
-import importlib.util
-import sys
+import re
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-
-# ---------------------------------------------------------------------------
-# Skill type
-# ---------------------------------------------------------------------------
 
 class Skill:
-    """A named, invocable skill (matches cc-mini's skill structure)."""
+    """A named, invocable skill matching claude-code's Skill type."""
 
     def __init__(
         self,
         name: str,
         description: str,
-        handler: Callable[..., str | None],
-        args_schema: dict[str, Any] | None = None,
+        body: str = "",
+        files: list[str] | None = None,
+        user_invocable: bool = True,
+        source: str = "",
     ) -> None:
         self.name = name
         self.description = description
-        self.handler = handler
-        self.args_schema = args_schema or {}
+        self.body = body  # the SKILL.md content (after frontmatter)
+        self.files = files or []
+        self.user_invocable = user_invocable
+        self.source = source  # where it was loaded from
+        self._frontmatter: dict[str, Any] = {}
 
-    def run(self, args: str = "") -> str | None:
-        """Invoke the skill with optional arguments string."""
-        return self.handler(args)
+    def get_prompt(self, user_args: str = "") -> str:
+        """Build prompt by merging body + user args (matching claude-code)."""
+        parts = [self.body]
+        if user_args:
+            parts.append(f"\n## User Request\n\n{user_args}")
+        # Append referenced file contents
+        if self.files:
+            parts.append("\n## Reference Files\n")
+            for fp in self.files:
+                p = Path(fp) if Path(fp).is_absolute() else Path(self.source).parent / fp
+                try:
+                    content = p.read_text(encoding="utf-8")
+                    parts.append(f"\n### {p.name}\n{content}")
+                except Exception:
+                    parts.append(f"\n### {p.name}\n(file not found)")
+        return "\n\n".join(parts).strip()
 
 
 # ---------------------------------------------------------------------------
-# Registry
+# Skill registry
 # ---------------------------------------------------------------------------
 
-_skills: dict[str, Skill] = {}
+_registry: dict[str, Skill] = {}
 
 
 def register_skill(skill: Skill) -> None:
-    """Register a skill (overwrites existing with same name)."""
-    _skills[skill.name] = skill
+    _registry[skill.name] = skill
 
 
 def get_skill(name: str) -> Skill | None:
-    """Look up a skill by name."""
-    return _skills.get(name)
+    return _registry.get(name)
 
 
 def list_skills() -> list[Skill]:
-    """Return all registered skills."""
-    return list(_skills.values())
+    return list(_registry.values())
 
 
 def build_skills_prompt_section() -> str:
-    """Build a system prompt section listing available skills."""
-    if not _skills:
+    """Build the skills section for the system prompt."""
+    skills = list_skills()
+    if not skills:
         return ""
-    lines = ["# Available Skills"]
-    for s in _skills.values():
+    lines = ["\n## Available Skills"]
+    for s in skills:
         lines.append(f"- /{s.name}: {s.description}")
     return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
-# Discovery
+# SKILL.md loader — matches claude-code's loadSkillsDir
 # ---------------------------------------------------------------------------
 
-def discover_skills(cwd: str) -> None:
-    """Discover and load skills from project and user directories."""
-    search_paths = [
-        Path(cwd) / ".mini-claude" / "skills",
+def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    """Extract YAML frontmatter (between --- markers) from SKILL.md."""
+    fm: dict[str, Any] = {}
+    body = text
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) >= 3:
+            # Simple key: value parsing (avoids yaml dependency)
+            for line in parts[1].strip().split("\n"):
+                line = line.strip()
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    k = k.strip()
+                    v = v.strip().strip('"').strip("'")
+                    fm[k] = v
+                elif line:
+                    # Could be a list item or continuation
+                    pass
+            body = parts[2].strip()
+    return fm, body
+
+
+def discover_skills(project_dir: str) -> None:
+    """Scan for SKILL.md files in project and user skill directories.
+
+    Matches claude-code's loadSkillsDir pattern:
+    - {project}/.claude/skills/<name>/SKILL.md
+    - ~/.claude/skills/<name>/SKILL.md
+    """
+    from pathlib import Path
+
+    search_dirs = [
+        Path(project_dir) / ".claude" / "skills",
+        Path(project_dir) / ".mini-claude" / "skills",
+        Path.home() / ".claude" / "skills",
         Path.home() / ".mini-claude" / "skills",
     ]
-    for dir_path in search_paths:
-        if not dir_path.is_dir():
+
+    seen = set()
+    for search_dir in search_dirs:
+        if not search_dir.is_dir():
             continue
-        for py_file in sorted(dir_path.glob("*.py")):
-            _load_skill_file(py_file)
+        for skill_dir in sorted(search_dir.iterdir()):
+            if not skill_dir.is_dir():
+                continue
+            skill_md = skill_dir / "SKILL.md"
+            if not skill_md.is_file() or skill_dir.name in seen:
+                continue
+            seen.add(skill_dir.name)
 
+            try:
+                text = skill_md.read_text(encoding="utf-8")
+                fm, body = _parse_frontmatter(text)
+            except Exception:
+                continue
 
-def _load_skill_file(path: Path) -> None:
-    """Load a single skill .py file and register any Skill instances found."""
-    try:
-        spec = importlib.util.spec_from_file_location(
-            f"_skill_{path.stem}", str(path)
-        )
-        if spec is None or spec.loader is None:
-            return
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[f"_skill_{path.stem}"] = mod
-        spec.loader.exec_module(mod)
-        # Look for Skill instances in the module
-        for attr_name in dir(mod):
-            attr = getattr(mod, attr_name)
-            if isinstance(attr, Skill):
-                register_skill(attr)
-    except Exception:
-        pass  # Don't crash on broken skills
+            name = fm.get("name", skill_dir.name)
+            desc = fm.get("description", body[:80].split("\n")[0] if body else name)
+
+            # Discover referenced files
+            files: list[str] = []
+            for entry in sorted(skill_dir.iterdir()):
+                if entry.is_file() and entry.name != "SKILL.md":
+                    files.append(str(entry))
+
+            skill = Skill(
+                name=name,
+                description=desc,
+                body=body,
+                files=files,
+                user_invocable=True,
+                source=str(skill_dir),
+            )
+            skill._frontmatter = fm
+            register_skill(skill)

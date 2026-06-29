@@ -1,90 +1,92 @@
-"""Built-in skills — matches cc-mini's bundled skills.
+"""Built-in skills — matches claude-code's bundled skills pattern.
 
-Provides: /review, /commit, /test, /simplify
-Each skill runs by submitting a prompt to the engine.
+Each skill has a body (the SKILL.md content) and get_prompt() builds the
+final prompt by merging body + user args.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
 from src.features.skills import Skill, register_skill
 
 
-def _review_handler(args: str) -> str | None:
-    """Code review skill — returns a prompt for the engine to execute."""
-    return (
-        "Run a code review on the current changes. Steps:\n"
-        "1. Run git_diff to see all changes\n"
-        "2. Check for bugs, security issues, unclear code, missing tests\n"
-        "3. Report findings in a structured format\n"
-        "4. If no changes found, say so and suggest running git_diff first"
-    )
+_REVIEW_BODY = """\
+Review the current changes for bugs, security issues, unclear code, and missing tests.
 
+Steps:
+1. Run git_diff to see all changes (both unstaged and staged)
+2. Check each changed file for:
+   - Logic bugs or edge cases
+   - Security vulnerabilities (injection, XSS, path traversal)
+   - Unclear variable names or missing comments on complex logic
+   - Missing error handling
+   - Missing or inadequate tests
+3. Report findings in a structured format:
+   - Critical issues (must fix)
+   - Warnings (should fix)
+   - Suggestions (nice to have)
+4. If no changes found, say so."""
 
-def _commit_handler(args: str) -> str | None:
-    """Git commit skill — generates commit message and commits."""
-    message = args.strip() if args else ""
-    if message:
-        return (
-            f"Create a git commit with the following message: {message}\n"
-            "1. Run git_diff --staged to verify what will be committed\n"
-            "2. If nothing is staged, run git_diff and ask if I want to stage everything\n"
-            "3. Run: git add -A\n"
-            "4. Run: git commit -m \"{message}\"\n"
-            "5. Confirm the commit was created"
-        )
-    return (
-        "Create a git commit for the current changes:\n"
-        "1. Run git_diff to see all changes\n"
-        "2. Run git_diff --staged to check staged changes\n"
-        "3. Generate a concise commit message describing the changes\n"
-        "4. Stage and commit with that message\n"
-        "5. Confirm the commit was created"
-    )
+_COMMIT_BODY = """\
+Create a git commit for the current changes.
 
+Steps:
+1. Run git_diff to see all changes
+2. Run git_diff --staged to check staged changes
+3. Generate a concise, descriptive commit message:
+   - Format: <type>: <description> (e.g., feat:, fix:, docs:, refactor:)
+   - Focus on WHY, not WHAT
+   - Keep under 72 chars for the subject line
+4. Stage all changes and commit
+5. Confirm the commit was created successfully
 
-def _test_handler(args: str) -> str | None:
-    """Run tests skill."""
-    return (
-        "Run the project tests:\n"
-        "1. First list_files to find test files\n"
-        "2. If tests exist, run them (e.g., python -m pytest or python test_all.py)\n"
-        "3. If no tests exist, suggest creating some\n"
-        "4. Report which tests passed/failed"
-    )
+IMPORTANT: Never skip hooks (--no-verify, --no-gpg-sign, etc) unless explicitly asked.
+Never force push to main/master. Never commit secrets or .env files.
 
+If nothing is staged, ask if the user wants to stage everything first."""
 
-def _simplify_handler(args: str) -> str | None:
-    """Code simplification skill."""
-    return (
-        "Review the current changes for code quality and simplify where possible:\n"
-        "1. Run git_diff to see changes\n"
-        "2. Look for: duplicated code, over-complicated logic, unused variables,\n"
-        "   overly long functions, unnecessary abstraction\n"
-        "3. Apply simplifications and verify tests still pass"
-    )
+_TEST_BODY = """\
+Run the project tests.
+
+Steps:
+1. Find test files (search_files for 'def test_' or look for test_*.py)
+2. Run tests: python -m pytest -v
+3. If tests fail, read the failing test and the source code to diagnose
+4. Report: which tests passed, which failed, and what the failures mean
+5. If no tests exist, suggest creating some"""
+
+_SIMPLIFY_BODY = """\
+Review the current changes for code quality and simplify.
+
+Steps:
+1. Run git_diff to see all changes
+2. Look for:
+   - Duplicated code patterns
+   - Overly complex logic (deeply nested, long functions)
+   - Unused variables or imports
+   - Unnecessary abstraction (3 similar lines is better than premature abstraction)
+3. Apply simplifications
+4. Verify tests still pass
+5. Report what was simplified and why"""
 
 
 def register_bundled_skills() -> None:
-    """Register all built-in skills."""
     register_skill(Skill(
         name="review",
         description="Code review the current changes",
-        handler=_review_handler,
+        body=_REVIEW_BODY,
     ))
     register_skill(Skill(
         name="commit",
         description="Create a git commit with a generated message",
-        handler=_commit_handler,
+        body=_COMMIT_BODY,
     ))
     register_skill(Skill(
         name="test",
         description="Run project tests",
-        handler=_test_handler,
+        body=_TEST_BODY,
     ))
     register_skill(Skill(
         name="simplify",
         description="Review code for quality and simplify",
-        handler=_simplify_handler,
+        body=_SIMPLIFY_BODY,
     ))
