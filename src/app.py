@@ -33,6 +33,9 @@ from src.tools.file_tools import (
 from src.tools.git_tools import GitDiff
 from src.tools.registry import ToolRegistry
 from src.tools.shell_tool import RunShell
+from src.tools.web_tools import WebFetchTool
+from src.tools.ask_tool import AskUserQuestionTool
+from src.tools.todo_tools import TodoWriteTool, TodoUpdateTool
 from src.workspace.sandbox import WorkspaceSandbox
 
 
@@ -74,6 +77,10 @@ def run(args) -> None:
     registry.register(SearchFiles(workspace.root))
     registry.register(GitDiff(workspace.root))
     registry.register(RunShell(workspace.root))
+    registry.register(WebFetchTool())
+    registry.register(AskUserQuestionTool())
+    registry.register(TodoWriteTool())
+    registry.register(TodoUpdateTool())
 
     # -- Skills (new feature) -----------------------------------------------
     from src.features.skills_bundled import register_bundled_skills
@@ -117,6 +124,10 @@ def run(args) -> None:
         SearchFiles(workspace.root),
         GitDiff(workspace.root),
         RunShell(workspace.root),
+        WebFetchTool(),
+        AskUserQuestionTool(),
+        TodoWriteTool(),
+        TodoUpdateTool(),
     ]
 
     engine = Engine(
