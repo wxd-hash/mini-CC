@@ -12,7 +12,6 @@ Key patterns from claude-code:
 
 from __future__ import annotations
 
-import random
 import sys
 import threading
 import time
@@ -45,25 +44,15 @@ def set_no_color() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Spinner — animated progress indicator (matches claude-code)
+# Spinner — count-up timer while waiting for API response
 # ---------------------------------------------------------------------------
-
-_SPINNER_FRAMES = ["·", "✢", "✱", "✶", "✻", "✽"]
-_SPINNER_FRAME_INTERVAL = 0.12  # ~8 fps, matches claude-code
-_SHOW_TIMER_AFTER = 5  # show elapsed time after 5s
-
-_SPINNER_VERBS = [
-    "思考中", "分析中", "检索中", "计算中", "处理中",
-    "推演中", "琢磨中", "构思中", "规划中", "执行中",
-    "编译中", "调试中", "优化中", "评估中", "验证中",
-    "学习中", "推理中", "归纳中", "演绎中", "综合中",
-]
-
-_MAX_RESULT_LINES = 3  # show at most this many lines
 
 
 class Spinner:
-    """Threaded animated spinner — runs while waiting for API response.
+    """Count-up timer — runs while waiting for API response.
+
+    Shows elapsed seconds counting up from 0. Timer stops when terminal
+    outputs content (text or tool calls), not when the API response ends.
 
     Usage::
 
@@ -77,8 +66,6 @@ class Spinner:
         self._running = False
         self._thread: threading.Thread | None = None
         self._start_time = 0.0
-        self._verb = ""
-        self._frame_idx = 0
 
     @property
     def elapsed(self) -> float:
@@ -89,8 +76,10 @@ class Spinner:
     def start(self) -> None:
         self._running = True
         self._start_time = time.monotonic()
-        self._verb = random.choice(_SPINNER_VERBS)
-        self._frame_idx = 0
+        # Write initial line immediately — don't wait for the thread's
+        # first sleep cycle, or fast API responses show nothing at all.
+        sys.stdout.write(f"\r\033[K{_DIM}⏳  等待 API 响应... 0s{_RESET}")
+        sys.stdout.flush()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -98,21 +87,16 @@ class Spinner:
         self._running = False
         if self._thread is not None:
             self._thread.join(timeout=0.5)
-        # Clear spinner line completely, then write completion
-        sys.stdout.write(f"\r\033[K{_DIM}✓  已用时 {self.elapsed:.0f}s{_RESET}\n")
+        sys.stdout.write(f"\r\033[K")
         sys.stdout.flush()
 
     def _run(self) -> None:
         while self._running:
             elapsed = time.monotonic() - self._start_time
-            frame = _SPINNER_FRAMES[self._frame_idx % len(_SPINNER_FRAMES)]
-            self._frame_idx += 1
-
-            time_str = f"  ({elapsed:.0f}s)" if elapsed >= _SHOW_TIMER_AFTER else ""
-            line = f"\r\033[K{_DIM}{frame}  {self._verb}{time_str}{_RESET}"
+            line = f"\r\033[K{_DIM}⏳  等待 API 响应... {elapsed:.0f}s{_RESET}"
             sys.stdout.write(line)
             sys.stdout.flush()
-            time.sleep(_SPINNER_FRAME_INTERVAL)
+            time.sleep(0.25)
 
 
 # ---------------------------------------------------------------------------
@@ -392,6 +376,8 @@ def select_menu(
                 selected = (selected - 1) % n
             elif ch in ("s", "j"):
                 selected = (selected + 1) % n
+            elif ch == "\x03":
+                raise KeyboardInterrupt()
             elif ch == "q":
                 return -1
 

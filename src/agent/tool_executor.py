@@ -204,6 +204,15 @@ class StreamingToolExecutor:
         self._pending_serial.clear()
         self._yielded.clear()
 
+    def cancel_all(self) -> None:
+        """Interrupt all running and pending tools immediately."""
+        for fut in self._futures.values():
+            fut.cancel()
+        self._futures.clear()
+        self._running_concurrent.clear()
+        self._pending_serial.clear()
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
     @property
     def all_denied(self) -> bool:
         """True if every tool in this batch was denied."""

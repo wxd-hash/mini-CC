@@ -300,46 +300,61 @@ class Engine:
                 _spinner.stop()
                 _spinner = None
 
-        for event in self.submit(user_input):
-            ev_type = event[0]
+        try:
+            for event in self.submit(user_input):
+                ev_type = event[0]
 
-            if ev_type == "waiting_api":
-                _start_spinner()
-                continue
+                if ev_type == "waiting_api":
+                    _start_spinner()
+                    continue
 
-            _stop_spinner()
-
-            if ev_type == "text":
-                _flush_reads()
-                chunk = event[1]
-                last_text += chunk
-                _buf.append(chunk)
-                has_output = True
-            elif ev_type == "tool_display":
-                last_text = ""
-                if not quiet:
-                    print(event[1])
-            elif ev_type == "tool_call":
-                if _buf and not quiet:
-                    print(render_markdown(_flush_buf()))
-                last_text = ""
-            elif ev_type == "tool_result":
-                last_text = ""
-                name = event[1]
-                if name in ("read_file", "list_files", "search_files", "git_diff"):
-                    _read_count += 1
-                    _read_names.append(name)
-                else:
+                # text events are buffered for markdown rendering; read
+                # tool results are collapsed. Only stop the spinner when
+                # something actually hits the screen.
+                if ev_type == "text":
+                    _flush_reads()
+                    chunk = event[1]
+                    last_text += chunk
+                    _buf.append(chunk)
+                    has_output = True
+                elif ev_type == "tool_display":
+                    _stop_spinner()
+                    last_text = ""
+                    if not quiet:
+                        print(event[1])
+                elif ev_type == "tool_call":
+                    _stop_spinner()
+                    if _buf and not quiet:
+                        print(render_markdown(_flush_buf()))
+                    last_text = ""
+                elif ev_type == "tool_result":
+                    last_text = ""
+                    name = event[1]
+                    if name in ("read_file", "list_files", "search_files", "git_diff"):
+                        # Read results are collapsed — keep spinner running
+                        _read_count += 1
+                        _read_names.append(name)
+                    else:
+                        _stop_spinner()
+                        _flush_reads()
+                        if not quiet:
+                            print(event[4])
+                elif ev_type == "error":
+                    _stop_spinner()
                     _flush_reads()
                     if not quiet:
-                        print(event[4])
-            elif ev_type == "error":
-                _flush_reads()
-                if not quiet:
-                    print(term.error(event[1]))
-            elif ev_type == "waiting":
-                if _buf and not quiet:
-                    print(render_markdown(_flush_buf()))
+                        print(term.error(event[1]))
+                elif ev_type == "waiting":
+                    _stop_spinner()
+                    if _buf and not quiet:
+                        print(render_markdown(_flush_buf()))
+
+        except KeyboardInterrupt:
+            _stop_spinner()
+            if not quiet:
+                print()
+                print(term.info("Interrupted."))
+            return last_text if last_text else "[interrupted]"
 
         _flush_reads()
         _stop_spinner()
@@ -421,6 +436,7 @@ class Engine:
             turn_count = 0
             compact_failures = 0
             compact_tracking: dict | None = None
+            _current_executor: StreamingToolExecutor | None = None
 
             while True:
                 turn_count += 1
@@ -481,6 +497,7 @@ class Engine:
                     permission_checker=self._permissions,
                     logger=self._logger,
                 )
+                _current_executor = executor
                 assistant_message: dict[str, Any] = {}
                 full_text = ""
                 tool_uses_seen = False
@@ -611,6 +628,10 @@ class Engine:
                     yield ("text", "All tool calls denied by permission system.")
                     break
 
+        except KeyboardInterrupt:
+            if _current_executor is not None:
+                _current_executor.cancel_all()
+            raise  # preserve all messages accumulated so far
         except AbortedError:
             self.cancel_turn()
             raise
