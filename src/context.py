@@ -31,6 +31,21 @@ BASE_SYSTEM_PROMPT = """\
 
 MEMORY.md 会被注入到后续所有对话的系统提示中。
 
+## 使用你的工具
+
+**专用工具优先**：read_file 不用 cat，write_file 不用 echo >，edit_file 不用 sed，
+glob 不用 find/ls，search_files 不用 grep/rg。run_shell 留给 shell 专用操作：
+包安装、测试运行、构建命令、git 操作。
+
+**不确定就先搜索（Search before saying unknown）**：
+当你不知道某个文件在哪、某段代码在哪、某个技术怎么用时，先搜再动。
+- 找不到文件 → glob（通配符匹配，如 `src/**/*.py`）
+- 探索目录结构 → list_files
+- 找不到代码内容 → search_files
+- 不知道某个技术/API/库/框架的用法 → web_search
+- web_search 找到官方文档或教程链接 → web_fetch 深入阅读
+- **核心原则：宁可多花两轮搜索，也别瞎编代码。编造不存在的 API 比多搜几次糟糕得多。**
+
 ## Shell 命令规则（防无限循环）
 - 服务器/长运行命令：用 run_in_background=true，启动后立即返回。
   进程在后台运行，不需要等结果。不要杀进程，不要重启。
@@ -39,8 +54,6 @@ MEMORY.md 会被注入到后续所有对话的系统提示中。
   会杀死 agent 自身。杀进程必须用 taskkill /PID <具体PID>。
 - 绝对禁止 sleep 循环或轮询。命令失败就诊断根因，不要重试
 - 如果必须 sleep，控制在 2 秒以内
-- 优先用专用工具：read_file 不用 cat，write_file 不用 echo >，
-  list_files 不用 ls，search_files 不用 grep/rg
 
 ## 行为规则
 - 对于复杂多步任务，用 todo_write 拆分并追踪进度。每完成一个子任务立即标记为 completed，不要攒着批量更新

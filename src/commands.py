@@ -237,6 +237,9 @@ def do_resume(
 
         _print_history(messages)
         engine.resume(messages)
+        # Reopen session file so new messages append to the original file,
+        # not a new one (avoids duplicate session entries)
+        engine.reopen_session(session_path)
         print(term.success(f"Resumed from {session_path.name} ({len(messages)} messages)"))
         print()
 

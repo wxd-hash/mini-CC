@@ -37,7 +37,17 @@ class RunShell(Tool):
     @property
     def description(self) -> str:
         return (
-            f"在工作区目录内执行 shell 命令（超时 {self.TIMEOUT} 秒）。返回退出码、stdout 和 stderr。"
+            f"在工作区目录内执行 shell 命令（超时 {self.TIMEOUT} 秒）。返回退出码、stdout 和 stderr。\n\n"
+            "**⚠️ 不要用 run_shell 做以下操作——专用工具更好用且更安全：**\n"
+            "- 读文件 → read_file（不用 cat/head/tail）\n"
+            "- 写文件 → write_file / edit_file（不用 echo >/sed/awk）\n"
+            "- 找文件 → glob（不用 find/ls）\n"
+            "- 搜内容 → search_files（不用 grep/rg）\n"
+            "- 获取网页 → web_fetch / web_search（不用 curl/wget）\n"
+            "- 文本输出 → 直接输出到对话（不用 echo/printf）\n\n"
+            "**run_shell 的正确用途**：包安装（pip, npm）、测试运行（pytest, go test）、"
+            "构建命令（make, cmake）、git 操作（git add/commit，不用 --no-verify）、"
+            "启动开发服务器（用 run_in_background=true）"
         )
 
     @property

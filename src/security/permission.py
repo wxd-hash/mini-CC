@@ -125,16 +125,15 @@ def _sanitize_self_kill(command: str) -> str:
     return command.strip().rstrip("&;").strip()
 
 
-def _is_self_destructive(command: str) -> bool:
-    """Check if a command would kill this agent process. NEVER allowed.
+def _is_mass_kill(command: str) -> bool:
+    """Check for mass-kill / fork-bomb patterns. These are NEVER allowed."""
+    return any(p.search(command) for p in _SELF_DESTRUCT_PATTERNS)
 
-    Matches claude-code's approach: block killing the agent's own PID,
-    but allow killing other specific PIDs (for server restart, etc).
-    """
-    # Check static patterns (mass kill, fork bombs, etc)
-    if any(p.search(command) for p in _SELF_DESTRUCT_PATTERNS):
+
+def _is_self_destructive(command: str) -> bool:
+    """Legacy: check mass-kill + own-PID patterns. Kept for tool_executor."""
+    if _is_mass_kill(command):
         return True
-    # Check if command targets the agent's OWN PID
     import os, re
     own_pid = str(os.getpid())
     pid_patterns = [
@@ -208,16 +207,21 @@ class PermissionChecker:
         # ═══════════════════════════════════════════════════════════════
         if tool_name == "run_shell":
             cmd = tool_input.get("command", "")
-            # Mass-kill patterns — always block
-            if _is_self_destructive(cmd):
+            # Step 1: Mass-kill / fork-bomb patterns — always block entirely
+            if _is_mass_kill(cmd):
                 self._deny_self_destruct(cmd)
                 return "deny"
-            # Own PID in compound command — sanitize, don't block
+            # Step 2: Sanitize agent's own PID from compound commands
+            # (e.g. "taskkill /PID 121804 & taskkill /PID <own>" → only first part survives)
             sanitized = _sanitize_self_kill(cmd)
             if sanitized != cmd:
-                tool_input["command"] = sanitized
                 if not sanitized:
-                    return "deny"  # nothing left after sanitization
+                    # Nothing left — the only target was agent's own PID
+                    self._deny_self_destruct(cmd)
+                    return "deny"
+                # There are other PIDs to kill — allow the sanitized version
+                tool_input["command"] = sanitized
+                print(f"  {term._YELLOW}[sanitized]{term._RESET} 自己的 PID 已从命令中移除，保留其他目标")
 
         # CLAUDE.md maintenance — always auto-allow, same as memory
         if tool_name in ("write_file", "edit_file"):
@@ -282,8 +286,13 @@ class PermissionChecker:
             return "allow"
         return "deny"
 
+    _READ_ONLY_TOOLS = {
+        "read_file", "list_files", "search_files", "git_diff",
+        "glob", "web_fetch", "web_search",
+    }
+
     def _check_plan(self, tool_name: str) -> str:
-        if tool_name in ("read_file", "list_files", "search_files", "git_diff", "Skill"):
+        if tool_name in self._READ_ONLY_TOOLS or tool_name == "Skill":
             return "allow"
         self._deny_msg(tool_name)
         return "deny"
@@ -292,17 +301,15 @@ class PermissionChecker:
     _INTERNAL_TOOLS = {"ask_user", "todo_write", "todo_update", "Skill"}
 
     def _check_ask(self, tool_name: str, tool_input: dict[str, Any]) -> str:
-        if tool_name in self._INTERNAL_TOOLS:
-            return "allow"
-        if tool_name in ("read_file", "list_files", "search_files", "git_diff", "web_fetch"):
+        if tool_name in self._INTERNAL_TOOLS or tool_name in self._READ_ONLY_TOOLS:
             return "allow"
         result = self._prompt(tool_name, tool_input)
         return "allow" if result else "deny"
 
     def _check_auto(self, tool_name: str, tool_input: dict[str, Any]) -> str:
-        if tool_name in self._INTERNAL_TOOLS:
+        if tool_name in self._INTERNAL_TOOLS or tool_name in self._READ_ONLY_TOOLS:
             return "allow"
-        if tool_name in ("read_file", "list_files", "write_file", "edit_file", "search_files", "git_diff", "web_fetch"):
+        if tool_name in ("write_file", "edit_file"):
             return "allow"
         if tool_name == "run_shell":
             if self._is_high_risk(tool_input.get("command", "")):

@@ -31,8 +31,12 @@ class WebFetchTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "获取指定 URL 的网页内容，并用 prompt 从中提取相关信息。"
-            "用于查阅在线文档、API 参考、博客文章等。"
+            "- 获取指定 URL 的网页内容，用 prompt 从中提取所需信息\n"
+            "- 通常先通过 web_search 发现 URL，再用 web_fetch 深入阅读\n"
+            "- **重要**：web_fetch 会失败于需要登录的页面（Google Docs、Confluence、Jira、GitHub private 等）\n"
+            "- HTTP URL 自动升级为 HTTPS。结果过大时自动截断。\n"
+            "- 重复访问同一 URL 有 15 分钟缓存加速。\n"
+            "- URL 重定向时会返回新地址——用新地址重新调用"
         )
 
     @property
@@ -119,9 +123,13 @@ class WebSearchTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "搜索网页获取最新信息。当需要查询最新文档、报错信息、"
-            "API 用法等超出训练数据的内容时使用。"
-            "返回每条结果的标题、URL 和摘要。"
+            "- 搜索网页获取训练数据之外的最新信息，结果自动包含标题、URL 和摘要\n"
+            "- **强制要求**：回答完用户问题后，必须在回复末尾列出 Sources 段落，"
+            "以 Markdown 链接格式引用所有相关来源：[标题](URL)。不引用来源即为违规。\n"
+            "- 搜索时注意使用正确的年份（当前 2026 年），"
+            "查询技术文档时加上年份参数避免过时结果\n"
+            "- 支持域名白名单（allowed_domains）和黑名单（blocked_domains）过滤\n"
+            "- 已在工具列表中的工具（如 read_file/list_files/glob）不要通过 web_search 搜索——直接调用即可"
         )
 
     @property

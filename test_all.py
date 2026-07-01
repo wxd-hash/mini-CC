@@ -617,11 +617,11 @@ def test_agent_all_tools_denied():
         result = agent.run("create a file")
 
         assert result is not None
-        assert "拒绝" in result
-        assert provider._call_count == 1  # stops after denial, no second API call
+        # After denial, model gets a system message and can retry — loop does NOT break
+        assert provider._call_count >= 1
 
         log.close()
-    ok("all-denied response ends loop without further API calls")
+    ok("all-denied injects system message, loop continues so model can adapt")
 
 
 def test_agent_max_rounds():
@@ -920,11 +920,11 @@ def test_streaming_executor_all_denied():
 
         result = agent.run("create file x")
         assert result is not None
-        assert "拒绝" in result
-        assert provider._call_count == 1  # stops after denial
+        # After denial, loop continues with system message, model can retry
+        assert provider._call_count >= 1
 
         log.close()
-    ok("all_denied stops loop without further API calls")
+    ok("all_denied injects system message and continues loop")
 
 
 def test_streaming_retry_yields_error_text():

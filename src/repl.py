@@ -169,6 +169,9 @@ def run_repl(
         except EOFError:
             sys.exit(0)
         except Exception:
+            import traceback
+            print()
+            traceback.print_exc()
             print()
             print(term.error("Engine crashed — but I'm still alive. Try again."))
             continue

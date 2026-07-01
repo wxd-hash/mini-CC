@@ -520,10 +520,11 @@ class GlobTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "按通配符模式匹配文件路径。用于快速查找文件，比 list_files 更精准。"
-            "支持 ** 递归匹配。示例："
-            'pattern="src/**/*.py" 查找 src 下所有 Python 文件；'
-            'pattern="*.md" 查找当前目录下所有 Markdown 文件。'
+            "- 按通配符模式匹配文件路径，结果按修改时间降序排列\n"
+            "- 知道文件命名模式时用 Glob 精准查找（如 `src/**/*.py`、`**/*.md`），"
+            "探索目录结构时用 list_files\n"
+            "- 支持 *, **, ?, [] 通配符\n"
+            "- 不要用 run_shell 的 find 或 ls 代替——Glob 更快更安全"
         )
 
     @property

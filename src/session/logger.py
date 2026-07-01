@@ -117,6 +117,21 @@ class SessionStore:
         except Exception:
             pass
 
+    def reopen(self, path: Path) -> None:
+        """Reopen this store to append to an existing session file.
+
+        Used after session resume to continue writing to the original file
+        instead of creating a duplicate.
+        """
+        self.close()
+        self._path = path
+        self._file = path.open("a", encoding="utf-8")
+        # Update session_id from the file name
+        stem = path.stem  # e.g. "session-20260701T083029Z"
+        if stem.startswith("session-"):
+            self.session_id = stem[len("session-"):]
+        self._write_meta()
+
     # -- metadata -------------------------------------------------------------
 
     def _write_meta(self) -> None:

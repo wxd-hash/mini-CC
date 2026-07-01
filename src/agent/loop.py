@@ -222,6 +222,42 @@ class Engine:
     def set_sessions_dir(self, path: Path) -> None:
         self._sessions_dir = path
 
+    def reopen_session(self, path: Path) -> None:
+        """After resume: point session_store + trace to the existing file.
+        Deletes the temporary empty files created during startup."""
+        import os as _os
+        old_store_path = None
+        old_trace_path = None
+
+        # Re-point session store to the resumed file
+        if self._session_store:
+            old_store_path = self._session_store._path
+            self._session_store.reopen(path)
+
+        # Re-point trace logger to the resumed file
+        if self._trace:
+            old_trace_path = self._trace.path
+            self._trace.close()
+            from src.session.trace import TraceLogger
+            self._trace = TraceLogger(path)
+            # Update SessionLogger's internal trace reference too
+            if self._logger:
+                self._logger._trace = self._trace
+
+        # Clean up the temporary empty files created at startup
+        for old_path in (old_store_path, old_trace_path):
+            if old_path and old_path != path and old_path.exists():
+                try:
+                    # Only delete if it's empty or has only minimal content
+                    size = old_path.stat().st_size
+                    if size < 500:  # Less than 500 bytes = essentially empty
+                        old_path.unlink()
+                        # Also clean up meta file
+                        meta = old_path.with_suffix(".meta.json")
+                        meta.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
     # -- abort support ------------------------------------------------------
 
     def abort(self) -> None:
@@ -747,10 +783,16 @@ class Engine:
                 # ── STEP 5: Flush tool results to message list ────────
                 self._flush_tool_results(all_results)
 
-                # All denied + no text → stop
+                # All denied + no text → tell model but let it try again
+                # (Model sees denial in tool results and can adapt in next iteration)
                 if executor.all_denied and not full_text:
-                    yield ("text", "所有工具调用都被权限系统拒绝。")
-                    break
+                    _denied_names = ", ".join(
+                        name for tid, name, args, content, elapsed in all_results
+                    )
+                    self._messages.append(self._provider.make_user_message(
+                        f"[系统提示] 上一轮所有工具调用被拒绝。请换一种方式完成任务，"
+                        f"不要重复相同的操作。被拒工具: {_denied_names}"
+                    ))
 
         except KeyboardInterrupt:
             if _current_executor is not None:
