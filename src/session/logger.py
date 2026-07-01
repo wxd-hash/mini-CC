@@ -67,6 +67,7 @@ class SessionStore:
         self._pending: list[dict[str, Any]] = []  # buffer before materialize
         self._msg_count = 0
         self._first_user_text = ""
+        self._created_at = datetime.now(timezone.utc).isoformat()
 
     # -- properties -----------------------------------------------------------
 
@@ -83,6 +84,8 @@ class SessionStore:
     def adopt(self, path: Path) -> None:
         """Adopt an existing session file (for resume). No file is created.
         Subsequent append_message() calls append to this file."""
+        self.close()
+        self._pending.clear()
         self._path = path
         self._meta_path = path.with_suffix(".meta.json")
         stem = path.stem
@@ -93,6 +96,7 @@ class SessionStore:
             if self._meta_path.exists():
                 data = json.loads(self._meta_path.read_text(encoding="utf-8"))
                 self._first_user_text = data.get("title", "")
+                self._created_at = data.get("created_at", self._created_at)
         except Exception:
             pass
 
@@ -144,14 +148,16 @@ class SessionStore:
 
             self._msg_count += 1
 
+            # Materialize on first append (regardless of whether title is set,
+            # e.g. after adopt() where _first_user_text was loaded from meta)
+            if not self.is_materialized:
+                self._materialize()
+
             # Capture first user text as session title
             if not self._first_user_text and role == "user":
                 text = content if isinstance(content, str) else str(content)[:100]
                 self._first_user_text = text.split("\n")[0].strip()
-                if not self.is_materialized:
-                    self._materialize()
-                else:
-                    self._write_meta()
+                self._write_meta()
         except Exception:
             pass  # don't break the conversation on I/O errors
 
@@ -173,7 +179,7 @@ class SessionStore:
                 "model": self.model,
                 "mode": self.mode,
                 "title": self.title,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": self._created_at,
             }
             self._meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
         except Exception:
@@ -260,22 +266,9 @@ class SessionStore:
 
     @staticmethod
     def cleanup_empty(path: Path) -> None:
-        """Delete a session file if it has no user messages."""
-        try:
-            with path.open("r", encoding="utf-8") as fh:
-                for line in fh:
-                    try:
-                        ev = json.loads(line.strip())
-                        if ev.get("role") == "user":
-                            return  # has content
-                    except json.JSONDecodeError:
-                        continue
-            path.unlink(missing_ok=True)
-            # Also clean up meta file
-            meta_path = path.with_suffix(".meta.json")
-            meta_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+        """Delete a session file if it has no user messages.
+        Delegates to module-level cleanup_empty which handles both formats."""
+        cleanup_empty(path)
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +325,7 @@ class SessionLogger:
             line = json.dumps(entry, ensure_ascii=False, default=str)
         except Exception:
             line = json.dumps({"type": "log_error", "message": "failed to serialize entry"})
+        self._trace._materialize()
         with self._trace._lock:
             self._trace._file.write(line + "\n")
             self._trace._file.flush()
@@ -610,6 +604,8 @@ def cleanup_empty(path: Path) -> None:
                 except json.JSONDecodeError:
                     continue
         path.unlink(missing_ok=True)
+        meta_path = path.with_suffix(".meta.json")
+        meta_path.unlink(missing_ok=True)
     except Exception:
         pass
 

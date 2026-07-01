@@ -113,6 +113,16 @@ class RunShell(Tool):
         - Commands exceeding BLOCKING_TIMEOUT: auto-background instead of kill
         """
         command: str = kwargs.get("command", "")
+
+        # ═══════════════════════════════════════════════════════════════
+        # Anti-pattern interception — block shell commands that should
+        # use dedicated tools instead. More effective than prompt guidance
+        # alone, especially for less disciplined models.
+        # ═══════════════════════════════════════════════════════════════
+        blocked = _check_anti_pattern(command)
+        if blocked:
+            return ToolResult(content=blocked, is_error=True)
+
         run_in_background: bool = kwargs.get("run_in_background", False)
         timeout_ms: float | None = kwargs.get("timeout")
         timeout = (timeout_ms / 1000.0) if timeout_ms else self.TIMEOUT
@@ -328,3 +338,50 @@ def _unlink(path: str) -> None:
         Path(path).unlink(missing_ok=True)
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Anti-pattern detection — return error message if shell command should
+# use a dedicated tool instead. Matches Claude Code's Bash tool validation.
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+_ANTI_PATTERNS: list[tuple[str, str, str]] = [
+    # (regex, tool_name, chinese_hint)
+    (r"^(dir|ls)\b", "list_files / glob", "列目录用 list_files 或 glob"),
+    (r"^(type|cat|head|tail)\b", "read_file", "读文件用 read_file"),
+    (r"^(find)\b(?!.*-name.*\.git)", "glob", "找文件用 glob"),
+    (r"^(grep|rg)\b(?!.*git\s)", "search_files", "搜代码内容用 search_files"),
+    (r"^(sed|awk)\b", "edit_file", "编辑文件用 edit_file"),
+    (r"^echo\b.*>", "write_file", "写文件用 write_file"),
+    (r"^(curl|wget)\b(?!.*api\.)", "web_fetch / web_search", "获取网页用 web_fetch 或 web_search"),
+]
+
+
+def _check_anti_pattern(command: str) -> str | None:
+    """Check if a shell command should use a dedicated tool instead.
+
+    Returns an error message string if blocked, None if allowed.
+    Skips commands that are part of a longer pipeline (|) or
+    are git subcommands.
+    """
+    cmd_stripped = command.strip()
+    if not cmd_stripped:
+        return None
+    # Don't block compound commands with piping (e.g., pytest | grep FAIL)
+    if "|" in cmd_stripped:
+        return None
+    # git subcommands are valid shell usage
+    first_word = cmd_stripped.split()[0].lower() if cmd_stripped.split() else ""
+    if first_word == "git":
+        return None
+
+    for pattern, tool, hint in _ANTI_PATTERNS:
+        if _re.search(pattern, cmd_stripped, _re.IGNORECASE):
+            return (
+                f"[反模式拦截] {hint}，不要用 run_shell。\n"
+                f"被拦截的命令: {cmd_stripped[:120]}\n"
+                f"请换用 {tool} 工具重新操作。"
+            )
+    return None

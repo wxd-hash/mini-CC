@@ -57,6 +57,7 @@ class TraceLogger:
         """Adopt an existing session file (for resume).
         Discards any buffered pending events — the resumed file already
         has its own session_start and history."""
+        self.close()
         self._path = path
         self._dir = path.parent
         self._pending.clear()
@@ -351,25 +352,27 @@ class TraceLogger:
             return
         line = json.dumps(entry, ensure_ascii=False, default=str) + "\n"
         with self._lock:
+            if self._file is None:
+                self._pending.append(entry)
+                return
             self._file.write(line)
             self._file.flush()
-        self._maybe_rotate()
+            self._maybe_rotate()  # inside lock to prevent races
 
     def _next_seq(self) -> int:
         self._seq += 1
         return self._seq
 
     def _maybe_rotate(self) -> None:
-        """Rotate file if it exceeds size limit."""
+        """Rotate file if it exceeds size limit. Caller must hold _lock."""
         try:
             if self._path.stat().st_size > self.MAX_FILE_SIZE:
-                with self._lock:
-                    self._file.close()
-                    ts = datetime.now().strftime("%Y%m%dT%H%M%S")
-                    new_name = f"{self._path.stem}-{ts}{self._path.suffix}"
-                    new_path = self._dir / new_name
-                    self._path.rename(new_path)
-                    self._file = open(self._path, "a", encoding="utf-8")
+                self._file.close()
+                ts = datetime.now().strftime("%Y%m%dT%H%M%S")
+                new_name = f"{self._path.stem}-{ts}{self._path.suffix}"
+                new_path = self._dir / new_name
+                self._path.rename(new_path)
+                self._file = open(self._path, "a", encoding="utf-8")
         except Exception:
             pass
 

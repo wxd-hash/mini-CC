@@ -232,6 +232,7 @@ class Engine:
             self._trace.adopt(path)
         if self._logger:
             self._logger._trace = self._trace
+            self._logger.path = path
 
     # -- abort support ------------------------------------------------------
 
@@ -417,6 +418,41 @@ class Engine:
                 )
             else:
                 self._messages.append({"role": "assistant", "content": content})
+
+    def _maybe_compact(self) -> None:
+        """Manual compaction triggered by /compact command.
+        Forces summarization of the current conversation history."""
+        if len(self._messages) <= 10:
+            print(term.info("Not enough messages to compact."))
+            return
+        before = len(self._messages)
+        print(term.info("[compacting conversation...]"), flush=True)
+        system = build_system_prompt(
+            workspace_dir=self._workspace_dir,
+            mode=self._permissions.mode.value,
+        )
+        if self._trace:
+            self._trace.compact_start(
+                reason="manual",
+                messages_before=before,
+                estimated_tokens=estimate_tokens(self._messages),
+            )
+        try:
+            self._messages = compact_messages(
+                provider=self._provider,
+                system_prompt=system,
+                messages=self._messages,
+                keep_recent=KEEP_RECENT_MESSAGES,
+            )
+            after = len(self._messages)
+            if self._trace:
+                self._trace.compact_done(messages_after=after)
+            self._cached_prompt = None
+            print(term.compact(before, after))
+        except Exception as e:
+            print(term.error(f"Compact failed: {e}"))
+            if self._trace:
+                self._trace.error("compact", str(e)[:200])
 
     def reload(self) -> None:
         self._cached_prompt = None
@@ -796,7 +832,7 @@ class Engine:
             line += term.tool_timing(elapsed)
         return ("tool_result", name, args, result, line)
 
-    def _flush_tool_results(self, items: list[tuple[str, str, dict[str, Any], str]]) -> None:
+    def _flush_tool_results(self, items: list[tuple[str, str, dict[str, Any], str, float]]) -> None:
         """Format tool results via provider and append to message list."""
         # Convert to legacy (id, name, content) format for provider
         # items is now (tid, name, args, content, elapsed) — 5-tuple

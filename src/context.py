@@ -335,9 +335,6 @@ def apply_tool_result_budget(
     temp files, and the message content is replaced with a preview + path.
     Tools without a limit are never affected.
     """
-    import tempfile, os
-    persisted_dir = None
-
     for msg in messages:
         role = msg.get("role", "")
         content = msg.get("content", "")
