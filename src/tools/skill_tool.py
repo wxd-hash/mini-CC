@@ -30,10 +30,21 @@ class SkillTool(Tool):
         if not skills:
             return "没有可用技能。"
         lines = [
-            "当用户的任务匹配某个内置技能时调用此工具。",
-            "例如：用户说'帮我review代码'→ 调 Skill(name=\"review\")",
-            "用户说'提交一下'→ 调 Skill(name=\"commit\")",
-            "用户说'跑个测试'→ 调 Skill(name=\"test\")",
+            "当用户的任务匹配某个已注册的技能时，这是一个**强制要求**：",
+            "在生成任何其他回复之前，必须先调用 Skill 工具。",
+            "",
+            "触发示例（用户说什么 → 立即调什么）：",
+            "- 用户说\"帮我review代码\"→ 立即 Skill(name=\"review\")",
+            "- 用户说\"提交一下\"→ 立即 Skill(name=\"commit\")",
+            "- 用户说\"跑个测试\"→ 立即 Skill(name=\"test\")",
+            "- 用户说\"简化这段\"→ 立即 Skill(name=\"simplify\")",
+            "",
+            "重要规则：",
+            "- 如果看到对话中有 <command-name> 标签，技能已加载，直接遵循指令",
+            "- 绝不提及某技能而不实际调用 Skill 工具",
+            "- 不要对内置 CLI 命令（/help, /clear 等）使用此工具",
+            "- Skill 调用不需要用户确认，始终自动允许",
+            "",
             "可用技能：",
         ]
         for s in skills:
@@ -75,6 +86,12 @@ class SkillTool(Tool):
             available = self._available_names()
             return ToolResult(
                 content=f"未知技能: /{name}。可用技能: {', '.join(available)}",
+                is_error=True,
+            )
+        # Honour disable_model_invocation flag (matching Claude Code)
+        if getattr(skill, 'disable_model_invocation', False):
+            return ToolResult(
+                content=f"技能 /{name} 不允许模型自动调用。请用户手动输入 /{name} 触发。",
                 is_error=True,
             )
         prompt = skill.get_prompt(args)

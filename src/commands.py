@@ -394,6 +394,10 @@ def handle_skill_command(skill_name: str, args: str, engine: Any) -> None:
         print(term.info(f"Skill /{skill_name} has no prompt content."))
         return
 
+    # Inject <command-name> tag so model knows skill is already loaded
+    # (matches Claude Code's pattern to prevent duplicate Skill tool calls)
+    prompt = f"<command-name>/{skill_name}</command-name>\n{prompt}"
+
     print(term.info(f"Running skill: /{skill_name}"))
     engine.run(prompt)
 

@@ -155,6 +155,9 @@ class Engine:
         self._memory_dir = memory_dir
         self._provider_factory = provider_factory
 
+        # Store invoked skill content for preservation across compaction
+        self._invoked_skills: dict[str, str] = {}
+
         # Internal state
         self._messages: list[dict[str, Any]] = []
         self._aborted = False
@@ -485,6 +488,22 @@ class Engine:
                         if self._trace:
                             self._trace.compact_done(messages_after=after)
                         print(term.compact(before, after))
+
+                        # Re-inject invoked skill content after compaction
+                        # (matches Claude Code's addInvokedSkill preservation)
+                        if self._invoked_skills:
+                            _reinject = []
+                            for _skill_name, _skill_body in self._invoked_skills.items():
+                                _reinject.append(
+                                    self._provider.make_user_message(
+                                        f"<command-name>/{_skill_name}</command-name>\n"
+                                        f"[技能已加载。以下是技能指令，继续按此执行：]\n\n"
+                                        f"{_skill_body}"
+                                    )
+                                )
+                            # Insert after the summary message (index 0) so model
+                            # remembers skill instructions in subsequent turns
+                            self._messages = [self._messages[0]] + _reinject + self._messages[1:]
                     except Exception as e:
                         compact_failures += 1
                         print(term.error(f"Auto-compact failed ({e})"))
@@ -644,6 +663,10 @@ class Engine:
                                     elapsed_ms=elapsed * 1000,
                                     is_error=("Error" in content or "错误" in content),
                                 )
+                            # Preserve skill content for compaction recovery
+                            if name == "Skill" and args:
+                                skill_n = args.get("name", "unknown")
+                                self._invoked_skills[skill_n] = content
                             yield self._show_tool_result_tu(name, args, content, elapsed)
 
                     elif isinstance(stream_event, StreamEnd):
@@ -689,6 +712,10 @@ class Engine:
                             elapsed_ms=elapsed * 1000,
                             is_error=("Error" in content or "错误" in content),
                         )
+                    # Preserve skill content for compaction recovery
+                    if name == "Skill" and args:
+                        skill_n = args.get("name", "unknown")
+                        self._invoked_skills[skill_n] = content
                     yield self._show_tool_result_tu(name, args, content, elapsed)
 
                 # Check for abort after tool execution

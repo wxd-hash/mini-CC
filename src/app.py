@@ -95,9 +95,12 @@ def run(args) -> None:
 
     # -- Skills (new feature) -----------------------------------------------
     from src.features.skills_bundled import register_bundled_skills
-    from src.features.skills import discover_skills, build_skills_prompt_section
+    from src.features.skills import discover_skills, build_skills_prompt_section, start_skill_watcher
     register_bundled_skills()
     discover_skills(str(workspace.root))
+
+    # Start background skill directory watcher (live reload, no restart needed)
+    start_skill_watcher(str(workspace.root))
 
     # SkillTool — lets the model invoke skills autonomously (matches Claude Code)
     from src.tools.skill_tool import SkillTool
@@ -143,6 +146,7 @@ def run(args) -> None:
         AskUserQuestionTool(),
         TodoWriteTool(),
         TodoUpdateTool(),
+        SkillTool(),
     ]
 
     engine = Engine(

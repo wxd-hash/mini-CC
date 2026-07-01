@@ -377,42 +377,174 @@ base_url = "https://api.deepseek.com/v1"
 
 ## 十一、Skills 技能系统
 
-Skills 参考了 Claude Code 的 SKILL.md 架构——不只是提示词注入，更支持**模型自主调用**。
+Skills 参考了 Claude Code 的 SKILL.md 架构。支持**模型自主调用**和**用户斜杠命令**两种入口，
+完整复刻了 Claude Code 的 BLOCKING REQUIREMENT 强约束 + `<command-name>` 防重复调用机制。
 
-### 11.1 两种触发方式
-
-| 触发方式 | 说明 |
-|----------|------|
-| **模型自主调用** | 模型判断任务匹配 Skill 用途时，主动调用 `Skill(name="review")` 工具 |
-| **用户斜杠命令** | 用户手动输入 `/review`，效果相同 |
-
-系统提示词中列出了可用 Skill，模型看到后自行判断何时调用。不需要用户记住命令。
-
-### 11.2 内建 Skills
-
-- `/review` — 代码审查：git diff → 检查 bug/安全/可改进处
-- `/commit` — 提交代码：生成 commit message → git add → git commit
-- `/test` — 运行测试：找到测试文件 → pytest → 报告
-- `/simplify` — 代码优化：git diff → 找重复/过度复杂 → 简化
-
-### 11.3 自定义 Skills（SKILL.md）
-
-在项目目录或用户目录下创建 SKILL.md 文件即可注册新 skill。支持 YAML frontmatter 设定名称和描述：
+### 11.1 完整工作流
 
 ```
-.claude/skills/my-review/SKILL.md:
+┌─────────────────────────────────────────────────────────────────┐
+│                      阶段一：启动发现                            │
+├─────────────────────────────────────────────────────────────────┤
+│  app.py                                                        │
+│    ├─ register_bundled_skills()  ← 注册 4 个内置技能             │
+│    ├─ discover_skills(cwd)       ← 扫描 .mini-claude/skills/    │
+│    │   ├─ {project}/.mini-claude/skills/<name>/SKILL.md         │
+│    │   └─ ~/.mini-claude/skills/<name>/SKILL.md                 │
+│    ├─ registry.register(SkillTool())  ← Skill 工具注册          │
+│    └─ start_skill_watcher(cwd)   ← 后台热加载监听               │
+├─────────────────────────────────────────────────────────────────┤
+│                      阶段二：每轮注入                            │
+├─────────────────────────────────────────────────────────────────┤
+│  context.py build_system_prompt() 每个 turn 重建时：              │
+│    1. BASE_SYSTEM_PROMPT  ← 含 Skills 章节（BLOCKING 强约束）    │
+│    2. PLAN_MODE_PROMPT（如果是 plan 模式）                       │
+│    3. <project_instructions>  ← CLAUDE.md 层级加载               │
+│    4. <project_memory>       ← KAIROS MEMORY.md 索引            │
+│    5. ─── AVAILABLE SKILLS ───  ← 醒目分隔线包围                 │
+│       ## Available Skills                                       │
+│       - /review: 审查当前代码变更                                 │
+│       - /commit: 生成提交信息并创建 git 提交                      │
+│       - /test: 运行项目测试                                      │
+│       - /simplify: 审查代码质量并简化                             │
+│       ───────────────────────────                               │
+├─────────────────────────────────────────────────────────────────┤
+│                   阶段三：模型自主触发                            │
+├─────────────────────────────────────────────────────────────────┤
+│  模型调用 Skill(name="review") → SkillTool.execute()             │
+│                                                                 │
+│  执行步骤：                                                      │
+│    1. get_skill(name) → 从 _registry 查找                       │
+│    2. 检查 skill.disable_model_invocation → 拒绝则不执行          │
+│    3. skill.get_prompt(args) → 合并 body + files + user_args    │
+│    4. 返回 ToolResult(content=prompt) → 模型收到技能指令          │
+│    5. 存储到 Engine._invoked_skills[name] = content  ← 压缩保留  │
+│    6. TraceLogger.skill_invoke() → 写入日志                      │
+│                                                                 │
+│  权限：Skill 始终自动允许（_INTERNAL_TOOLS），三模式均不弹窗       │
+│                                                                 │
+│  ◆ 防止重复调用：                                                │
+│    如果对话中已有 <command-name> 标签 → 说明技能已加载，           │
+│    模型直接遵循指令执行，不再次调用 Skill 工具                     │
+├─────────────────────────────────────────────────────────────────┤
+│                   阶段四：用户手动触发                            │
+├─────────────────────────────────────────────────────────────────┤
+│  用户输入 /review → commands.py handle_skill_command()           │
+│                                                                 │
+│  执行步骤：                                                      │
+│    1. get_skill("review") → 查找技能                             │
+│    2. skill.get_prompt("") → 构建提示词                          │
+│    3. 前置注入 <command-name>/review</command-name>              │
+│       （标记技能已加载，防止模型后续重复调用 Skill 工具）           │
+│    4. engine.run(prompt) → 提交为新的 user 消息                  │
+│    5. TraceLogger.skill_invoke() → 写入日志                      │
+│                                                                 │
+│  与模型触发的区别：                                              │
+│    - 模型触发：tool call → tool result → 消息历史保留            │
+│    - 用户触发：直接 engine.run() → 作为新的用户消息注入            │
+│    但最终效果相同——模型收到技能指令并按步骤执行                     │
+├─────────────────────────────────────────────────────────────────┤
+│                   阶段五：压缩恢复                                │
+├─────────────────────────────────────────────────────────────────┤
+│  loop.py auto-compact 完成后：                                   │
+│                                                                 │
+│  1. 检查 self._invoked_skills 是否有内容                         │
+│  2. 将每个已调用技能的 body 包装为 user 消息：                    │
+│     <command-name>/review</command-name>                        │
+│     [技能已加载。以下是技能指令，继续按此执行：]                    │
+│     <技能原始 body>                                              │
+│  3. 插入到压缩后的 messages[0] 之后                               │
+│                                                                 │
+│  → 即使压缩删除了原始的 Skill 调用消息，技能指令也会保留           │
+├─────────────────────────────────────────────────────────────────┤
+│                   阶段六：热加载                                  │
+├─────────────────────────────────────────────────────────────────┤
+│  skills.py 后台线程每 3 秒轮询：                                  │
+│                                                                 │
+│  检测到 ~/.mini-claude/skills/ 目录 mtime 变化后：                │
+│    1. 逐个检查子目录中的 SKILL.md 文件修改时间                     │
+│    2. 清除该目录来源的旧技能（保留内置技能）                       │
+│    3. 重新调用 discover_skills() 加载                            │
+│                                                                 │
+│  → 新增 SKILL.md 无需重启 minicc，3 秒后自动可用                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 11.2 核心组件对照（Mini-CC vs Claude Code）
+
+| 组件 | Claude Code | Mini-CC | 文件 |
+|------|------------|---------|------|
+| Skill 工具 | `SkillTool.ts` BLOCKING REQUIREMENT 强约束 | `SkillTool` 同名同约束 | `src/tools/skill_tool.py` |
+| 技能注册表 | `_registry` + `getAllCommands()` | `_registry` dict | `src/features/skills.py` |
+| SKILL.md 发现 | `loadSkillsFromSkillsDir()` 5 层来源 | `discover_skills()` 2 层（项目+用户） | `src/features/skills.py` |
+| Frontmatter 解析 | `parseSkillFrontmatterFields()` 16 个字段 | `_parse_frontmatter()` 精简解析 | `src/features/skills.py` |
+| 技能列表附件 | `skill_listing` system-reminder 1% 预算 | `build_skills_prompt_section()` 1500 字符预算 | `src/features/skills.py` |
+| 系统提示指引 | `getSessionSpecificGuidanceSection()` | `BASE_SYSTEM_PROMPT` Skills 章节 | `src/context.py` |
+| `<command-name>` 标记 | 防止重复调用 | 同机制 | `src/commands.py:400` |
+| 压缩保留 | `addInvokedSkill()` → `invokedSkills` Map | `Engine._invoked_skills` dict | `src/agent/loop.py` |
+| 调用开关 | `userInvocable` + `disableModelInvocation` | 同名字段 | `src/features/skills.py:37-38` |
+| 变更检测 | `skillChangeDetector` + chokidar | `start_skill_watcher()` 轮询 | `src/features/skills.py:213` |
+| 权限 | 5 层检查（拒绝→允许→安全属性→询问） | `_INTERNAL_TOOLS` 直接允许 | `src/security/permission.py` |
+
+### 11.3 两种触发方式详解
+
+| | 模型自主触发 | 用户斜杠命令 |
+|---|---|---|
+| **入口** | 模型调用 `Skill(name="review")` 工具 | 用户输入 `/review` |
+| **触发条件** | 用户说"帮我 review 代码"等自然语言 | 用户主动敲斜杠命令 |
+| **权限** | 始终允许（`_INTERNAL_TOOLS`） | 无需权限检查（REPL 层面处理） |
+| **`<command-name>` 标记** | 无需注入（模型刚调用的就是 Skill） | 注入 `/<name>` 防止后续模型重复调用 |
+| **消息路径** | tool_call → tool_result → 消息历史 | engine.run(prompt) → 新的 user 消息 |
+| **日志** | `skill_invoke` + `tool_start` + `tool_done` | `skill_invoke` + `repl_command` |
+
+### 11.4 内建 Skills（4 个）
+
+| 技能 | 命令 | 触发词示例 |
+|------|------|-----------|
+| `review` | `/review` | "帮我 review"、"审查一下代码"、"检查有没有 bug" |
+| `commit` | `/commit` | "提交一下"、"帮我 commit"、"创建提交" |
+| `test` | `/test` | "跑测试"、"测试看看"、"运行 pytest" |
+| `simplify` | `/simplify` | "简化代码"、"优化一下"、"代码太复杂了" |
+
+### 11.5 自定义 Skills（SKILL.md）
+
+在 `.mini-claude/skills/<name>/SKILL.md` 创建文件即可注册。
+
+```yaml
 ---
 name: my-review
 description: 用中文做代码审查
+user-invocable: true
+disable-model-invocation: false
 ---
 用中文审查当前变更，关注性能和安全。
 ```
 
-skill 目录下的任何其他文件（如 reference.md、example.py）会自动加载到 prompt 作为参考内容。`/my-review` 直接可用。
+**支持的 frontmatter 字段**：
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `name` | string | 目录名 | 技能唯一标识 |
+| `description` | string | body 首行 | 触发条件描述（非功能说明） |
+| `user-invocable` | bool | `true` | 用户能否通过 `/name` 调用 |
+| `disable-model-invocation` | bool | `false` | 禁止模型自动调用此技能 |
 
 **搜索路径**：
-- 项目级：`./.claude/skills/<name>/SKILL.md`
-- 用户级：`~/.claude/skills/<name>/SKILL.md`
+- 项目级：`{project}/.mini-claude/skills/<name>/SKILL.md`
+- 用户级：`~/.mini-claude/skills/<name>/SKILL.md`
+
+**热加载**：新增或修改 SKILL.md 后 3 秒内自动生效，无需重启。
+
+### 11.6 技能预算控制
+
+`build_skills_prompt_section()` 使用 **1500 字符预算**（约 1% 上下文窗口）：
+
+| 级别 | 条件 | 输出 |
+|------|------|------|
+| 完整描述 | 总字符 < 1500 | `- /review: 审查当前代码变更` |
+| 仅名称 | 超出预算 | `- /review` |
+
+内置技能始终优先展示，外部技能在预算不足时先被裁剪。"""
 
 ---
 

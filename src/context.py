@@ -69,13 +69,24 @@ MEMORY.md 会被注入到后续所有对话的系统提示中。
 - 说"完成"前先验证：测试跑通了吗？能执行吗？如果不能验证就明确说"未验证"，不假装完成。
 - 最后用中文总结改了什么、验证了什么，精炼克制不啰嗦。
 
-## Skills（技能调用）
+## Skills（技能调用）——必须主动判断并调用
+
 你有可用的技能（Skills），每个技能是一段预设的专业提示词。
-- 用 Skill 工具调用：Skill(name="技能名")，可选传 args 参数
-- **主动调用**：当用户说"帮我 review 代码"、"提交一下"、"跑测试"、"简化代码"时，
-  自己判断匹配哪个技能，立刻调用 Skill 工具，不要当普通请求处理
-- 调用后你会收到该技能的完整指令，按指令逐步执行
+
+**BLOCKING REQUIREMENT**：当用户请求匹配某个技能时，在生成任何其他回复之前
+**必须先调用 Skill 工具**。不要先自己开始执行——先把技能调出来再按指令行动。
+
+触发对照表（用户说什么 → 立即调什么）：
+- "帮我 review 代码" / "审查一下" → Skill(name="review")
+- "帮我提交" / "commit 一下" → Skill(name="commit")
+- "跑一下测试" / "测试看看" → Skill(name="test")
+- "简化代码" / "优化一下" → Skill(name="simplify")
+
+重要规则：
+- 如果对话中已出现 <command-name> 标签，技能已加载，直接遵循指令执行，不要再次调用
+- 绝不只提及技能名称而不调用 Skill 工具——必须先调用
 - 不要编造技能名称——只使用下方 ## Available Skills 中列出的
+- Skill 调用始终自动允许，不会弹权限窗
 - 用户也可以直接输入 /skill-name 手动触发，效果相同"""
 
 # Limits
@@ -244,11 +255,18 @@ def build_system_prompt(
     if memory:
         parts.append(f"<project_memory>\n{memory}\n</project_memory>")
 
-    # Available skills — always include so model can call Skill tool
+    # Available skills — always include so model can call Skill tool.
+    # Wrapped in clear visual separators matching Claude Code's skill_listing pattern.
     from src.features.skills import build_skills_prompt_section
     skills_section = build_skills_prompt_section()
     if skills_section:
-        parts.append(skills_section)
+        parts.append(
+            "──────────────────────────────────────────\n"
+            "🔧 AVAILABLE SKILLS — 匹配用户任务时 MUST 先调用 Skill 工具\n"
+            "──────────────────────────────────────────\n"
+            f"{skills_section}\n"
+            "──────────────────────────────────────────"
+        )
 
     return "\n\n".join(parts)
 
