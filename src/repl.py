@@ -131,10 +131,6 @@ def run_repl(
             if not stripped:
                 continue
 
-            # Trace: user_input
-            if getattr(engine, '_trace', None):
-                engine._trace.user_input(stripped, is_command=stripped.startswith("/"))
-
             # Slash commands — handle /exit BEFORE handle_command
             if stripped.startswith("/"):
                 parts = stripped[1:].split(maxsplit=1)
