@@ -82,8 +82,8 @@ class StreamingToolExecutor:
         if tool is None:
             self._denied[block.id] = block.name
             self._results[block.id] = (
-                f"ERROR: Unknown tool '{block.name}'. "
-                f"Available tools: {', '.join(sorted(self._tools.keys()))}."
+                f"错误: 未知工具 '{block.name}'。"
+                f"可用工具: {', '.join(sorted(self._tools.keys()))}。"
             )
             return
 
@@ -100,13 +100,13 @@ class StreamingToolExecutor:
                         f"用 taskkill /PID <目标PID> 杀特定进程，不要用 /IM python 全部杀。"
                     )
                     return
-            self._results[block.id] = "Permission denied."
+            self._results[block.id] = "权限被拒绝。"
             return
 
         # Check if stuck
         if self._stuck.check(block.name, block.arguments):
             self._results[block.id] = (
-                f"WARNING: {block.name} called 3x with same args."
+                f"警告: {block.name} 已用相同参数调用了 3 次。"
             )
             return
 
@@ -139,7 +139,7 @@ class StreamingToolExecutor:
             try:
                 content = self._futures[tid].result()
             except Exception as exc:
-                content = f"Tool execution error: {exc}"
+                content = f"工具执行错误: {exc}"
             self._results[tid] = content
             self._running_concurrent.discard(tid)
             self._yielded.add(tid)
@@ -160,7 +160,7 @@ class StreamingToolExecutor:
                 try:
                     content = self._futures[tid].result()
                 except Exception as exc:
-                    content = f"Tool execution error: {exc}"
+                    content = f"工具执行错误: {exc}"
                 self._results[tid] = content
 
         # Now run serial tools one at a time with spinner
@@ -220,7 +220,7 @@ class StreamingToolExecutor:
             return False
         return all(
             tid in self._denied
-            or "Permission denied." in self._results.get(tid, "")
+            or "权限被拒绝。" in self._results.get(tid, "")
             for tid in self._order
         )
 
@@ -245,7 +245,7 @@ class StreamingToolExecutor:
         tool = self._tools.get(block.name)
         if tool is None:
             self._consecutive_errors += 1
-            return f"Unknown tool: {block.name}"
+            return f"未知工具: {block.name}"
 
         try:
             result = tool.execute(**block.arguments)
@@ -262,7 +262,7 @@ class StreamingToolExecutor:
 
         except Exception as exc:
             self._consecutive_errors += 1
-            error_msg = f"Tool error: {exc}"
+            error_msg = f"工具错误: {exc}"
             if self._logger:
                 self._logger.error(error_msg)
             return error_msg

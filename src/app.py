@@ -88,6 +88,10 @@ def run(args) -> None:
     register_bundled_skills()
     discover_skills(str(workspace.root))
 
+    # SkillTool — lets the model invoke skills autonomously (matches Claude Code)
+    from src.tools.skill_tool import SkillTool
+    registry.register(SkillTool())
+
     # -- Memory (new feature) -----------------------------------------------
     from src.features.memory import ensure_memory_dir
     memory_dir = app_config.memory_dir

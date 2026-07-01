@@ -67,7 +67,15 @@ MEMORY.md 会被注入到后续所有对话的系统提示中。
 - 别在工具调用开头加冒号（"我来读一下：" 应为 "我来读一下。"）。
 - 任务完成直接汇报结果。禁止 "还有什么需要吗？""请告诉我" 之类套话。
 - 说"完成"前先验证：测试跑通了吗？能执行吗？如果不能验证就明确说"未验证"，不假装完成。
-- 最后用中文总结改了什么、验证了什么，精炼克制不啰嗦。"""
+- 最后用中文总结改了什么、验证了什么，精炼克制不啰嗦。
+
+## Skills（技能调用）
+你有可用的技能（Skills），每个技能是一段预设的专业提示词。
+- 用 Skill 工具调用：Skill(name="技能名")，可选传 args 参数
+- 当你判断某个 Skill 适合当前任务时主动调用——不要等用户提醒
+- 调用后你会收到该技能的完整指令，按指令逐步执行
+- 不要编造技能名称——只使用系统提示词底部 <available_skills> 中列出的
+- 用户也可以直接输入 /skill-name 手动触发，效果相同"""
 
 # Limits
 MAX_INSTRUCTIONS_CHARS = 8000
@@ -224,9 +232,9 @@ def build_system_prompt(
         claude_md_path = ws / "CLAUDE.md"
         parts.append(
             f"<project_instructions>\n"
-            f"No CLAUDE.md found at {claude_md_path}. Run /init to auto-generate one, "
-            f"or use edit_file/write_file to create it yourself. CLAUDE.md is injected "
-            f"into every session — put project conventions, commands, and gotchas there.\n"
+            f"在 {claude_md_path} 未找到 CLAUDE.md。运行 /init 自动生成一个，"
+            f"或使用 edit_file/write_file 自行创建。CLAUDE.md 会被注入到每次会话中——"
+            f"把项目规范、常用命令和注意事项放在里面。\n"
             f"</project_instructions>"
         )
 
@@ -243,32 +251,32 @@ def build_system_prompt(
 # ---------------------------------------------------------------------------
 
 COMPACT_SYSTEM_PROMPT = """\
-You are a conversation summarizer. Summarize the conversation segment below.
+你是一个对话摘要生成器。请总结以下对话片段。
 
-## User Goal
-What the user asked for and what should be accomplished.
+## 用户目标
+用户要求了什么，应该完成什么。
 
-## Files & Project
-- Files that were read, with key findings (e.g. "app.py: Flask app with 3 routes")
-- Files that were modified/created (e.g. "models.py: added email field to User")
-- Files that were searched and why
+## 文件与项目
+- 被读取的文件及其关键发现（如 "app.py: Flask 应用有 3 个路由"）
+- 被修改/创建的文件（如 "models.py: 给 User 添加了 email 字段"）
+- 被搜索的文件及搜索原因
 
-## Commands & Results
-Shell commands executed and their outcomes. Only include commands whose
-results are still relevant — skip transient commands like `ls` or `mkdir`.
+## 命令与结果
+已执行的 shell 命令及其结果。只包含其结果仍然相关的命令——
+跳过 `ls`、`mkdir` 等临时性命令。
 
-## Errors & Fixes
-Any errors encountered and how they were resolved. Include file:line references.
+## 错误与修复
+遇到的错误及其解决方法。包含文件:行号的引用。
 
-## Current State
-What's working now. What's still broken or unresolved. Any decisions made.
+## 当前状态
+目前哪些功能正常。哪些仍然有问题或未解决。做了哪些决策。
 
-## Project Structure
-Key facts about the codebase learned in this segment: entry points,
-framework used, database type, test runner, config format, etc.
+## 项目结构
+本段对话中了解到的代码库关键信息：入口点、使用的框架、
+数据库类型、测试运行器、配置格式等。
 
-Be specific with paths and values. Don't just say "fixed a bug" — say what was
-wrong and what change fixed it. Prefer bullet points over paragraphs."""
+给出具体的路径和值。不要说"修复了一个 bug"——
+要说具体是什么问题、用什么改动修复的。优先使用要列点而非段落。"""
 
 
 # Tools whose results can be compacted (matches claude-code COMPACTABLE_TOOLS)
@@ -319,9 +327,9 @@ def _budget_block(block: dict[str, Any], limit: int, tool_name: str) -> None:
     preview = raw[:2000]
     block["content"] = (
         f"<persisted-output>\n"
-        f"Tool {tool_name} returned {len(raw)} chars (limit: {limit}).\n"
-        f"Preview (first 2000 chars):\n{preview}\n"
-        f"... [{len(raw) - 2000} more chars truncated]\n"
+        f"工具 {tool_name} 返回了 {len(raw)} 字符（限制: {limit}）。\n"
+        f"预览（前 2000 字符）:\n{preview}\n"
+        f"... [还有 {len(raw) - 2000} 字符被截断]\n"
         f"</persisted-output>"
     )
 
@@ -332,9 +340,9 @@ def _budget_string(raw: str, limit: int, tool_name: str) -> str:
     preview = raw[:2000]
     return (
         f"<persisted-output>\n"
-        f"Tool {tool_name} returned {len(raw)} chars (limit: {limit}).\n"
-        f"Preview (first 2000 chars):\n{preview}\n"
-        f"... [{len(raw) - 2000} more chars truncated]\n"
+        f"工具 {tool_name} 返回了 {len(raw)} 字符（限制: {limit}）。\n"
+        f"预览（前 2000 字符）:\n{preview}\n"
+        f"... [还有 {len(raw) - 2000} 字符被截断]\n"
         f"</persisted-output>"
     )
 

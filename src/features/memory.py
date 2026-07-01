@@ -49,59 +49,58 @@ MEMORY_TYPES = {
 }
 
 WHAT_NOT_TO_SAVE = """\
-## What NOT to save
-- Code patterns, conventions, architecture — these live in the code
-- Git history or recent changes — `git log` is authoritative
-- Debugging solutions — the fix is in the code
-- Anything already in CLAUDE.md files
-- Ephemeral task details: in-progress work, temporary state
+## 什么不要保存
+- 代码模式、规范、架构——这些在代码中就能看到
+- Git 历史或近期变更——`git log` 才是权威
+- 调试解决方案——修复在代码里
+- 任何已经在 CLAUDE.md 中的内容
+- 临时任务细节：进行中的工作、临时状态
 """
 
 EXTRACTION_PROMPT = """\
-You are the memory extraction agent. Analyze the conversation above and extract durable memories.
+你是记忆提取 Agent。分析上述对话并提取持久记忆。
 
-## Memory types
+## 记忆类型
 {memory_types}
 
-## How to save memories
+## 如何保存记忆
 
-Each memory goes in its own file under {memory_dir}. Use this frontmatter format:
+每条记忆保存在 {memory_dir} 下的独立文件中。使用以下 frontmatter 格式：
 
 ```markdown
 ---
-name: short-kebab-case-slug
-description: one-line summary for future relevance checks
+name: 简短-kebab-case-名称
+description: 一行摘要，用于将来的相关性判断
 metadata:
   type: {types_list}
 last_updated: YYYY-MM-DD
 ---
 
-(memory content — for feedback/project: rule/fact, then **Why:** and **How to apply:**)
+（记忆内容——对于 feedback/project 类型：规则/事实，然后是**原因：**和**如何应用：**）
 ```
 
-Then add a pointer to MEMORY.md: `- [Title](file.md) — one-line hook`
+然后在 MEMORY.md 中添加一行索引：`- [标题](file.md) — 一行摘要`
 
-## Update rules
+## 更新规则
 
-- If a memory is outdated or wrong, update it in place (bump mtime)
-- If a memory is no longer relevant, remove it from MEMORY.md but keep the file
-- Keep MEMORY.md index under 50 lines — prune least-important entries if needed
-- Timestamps show when each file was last modified — use this to judge freshness
+- 如果记忆过时或错误，原地更新（刷新 mtime）
+- 如果记忆不再相关，从 MEMORY.md 中移除但保留文件
+- MEMORY.md 索引控制在 50 行以内——必要时删减最不重要的条目
+- 时间戳显示每个文件的最后修改时间——用于判断新鲜度
 
 {what_not_to_save}
 
-## CLAUDE.md maintenance
+## CLAUDE.md 维护
 
-If a CLAUDE.md exists in the workspace root, also check whether the conversation
-revealed new project knowledge that should go there: non-obvious commands,
-architecture decisions, testing conventions, gotchas, code style rules.
-Update it via edit_file if needed. CLAUDE.md is injected into every session's
-system prompt — keep it concise and project-specific, not generic.
+如果工作区根目录存在 CLAUDE.md，也检查一下对话中是否揭示了新的项目知识
+应该放入其中：不易发现的命令、架构决策、测试规范、陷阱、代码风格规则。
+如果需要，通过 edit_file 更新它。CLAUDE.md 会被注入到每次会话的
+系统提示中——保持简洁且项目专用，不要写通用的。
 
-## Strategy
-Turn 1: read MEMORY.md, any existing memory files, and CLAUDE.md (parallel reads)
-Turn 2: write new/updated memory files + update MEMORY.md index + update CLAUDE.md if needed (parallel writes)
-Do NOT waste turns investigating — only use conversation content above.
+## 策略
+第 1 轮：读取 MEMORY.md、已有的记忆文件、CLAUDE.md（并行读取）
+第 2 轮：写入新的/更新的记忆文件 + 更新 MEMORY.md 索引 + 更新 CLAUDE.md（如果需要）（并行写入）
+不要浪费轮次去调查——只使用上述对话内容。
 """
 
 # ---------------------------------------------------------------------------
@@ -168,10 +167,10 @@ def memory_freshness_warning(filepath: Path) -> str:
     if days <= 1:
         return ""
     return (
-        f"This memory is {days} days old. "
-        f"Memories are point-in-time observations, not live state — "
-        f"claims about code behavior may be outdated. "
-        f"Verify against current code before asserting as fact."
+        f"此记忆已有 {days} 天。"
+        f"记忆是时间点快照，不是实时状态——"
+        f"关于代码行为的断言可能已过时。"
+        f"在作为事实使用前请验证当前代码。"
     )
 
 

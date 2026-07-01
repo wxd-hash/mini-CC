@@ -130,7 +130,7 @@ def call_model_with_retry(
             if _is_auth_error(exc):
                 yield StreamEnd(
                     assistant_message={},
-                    text=f"Authentication failed: {err_msg}",
+                    text=f"认证失败: {err_msg}",
                 )
                 return
 
@@ -139,11 +139,11 @@ def call_model_with_retry(
                 if reduced >= 1024:
                     current_max_tokens = reduced
                     if attempt >= _HIDE_RETRY_UNTIL_ATTEMPT:
-                        yield TextDelta(f"\n[Context overflow → max_tokens={reduced}, retrying...]\n")
+                        yield TextDelta(f"\n[上下文溢出 → max_tokens={reduced}, 重试中...]\n")
                     continue
                 yield StreamEnd(
                     assistant_message={},
-                    text=f"Context overflow, cannot reduce further: {err_msg}",
+                    text=f"上下文溢出，无法再降低: {err_msg}",
                 )
                 return
 
@@ -151,18 +151,18 @@ def call_model_with_retry(
                 if attempt < MAX_RETRIES - 1:
                     wait = _compute_retry_delay(attempt, _parse_retry_after(exc))
                     if attempt >= _HIDE_RETRY_UNTIL_ATTEMPT:
-                        yield TextDelta(f"\n[API error, retrying in {wait:.1f}s...]\n")
+                        yield TextDelta(f"\n[API 错误, {wait:.1f}s 后重试...]\n")
                     time.sleep(wait)
                     continue
                 yield StreamEnd(
                     assistant_message={},
-                    text=f"API error after {MAX_RETRIES} retries: {err_msg}",
+                    text=f"重试 {MAX_RETRIES} 次后 API 仍然错误: {err_msg}",
                 )
                 return
 
-            # Unknown error — don't retry
+            # 未知错误——不重试
             yield StreamEnd(
                 assistant_message={},
-                text=f"API error: {err_msg}",
+                text=f"API 错误: {err_msg}",
             )
             return

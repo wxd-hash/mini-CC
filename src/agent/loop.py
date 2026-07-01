@@ -524,7 +524,7 @@ class Engine:
                         result = term.tool_call(n, a)
                     else:
                         names = [t[0] for t in _buf_read_tools]
-                        desc = f"Read {len(names)} files" if all(n in ("read_file","list_files","search_files","git_diff") for n in names) else f"Called {len(names)} tools"
+                        desc = f"读取 {len(names)} 个文件" if all(n in ("read_file","list_files","search_files","git_diff") for n in names) else f"调用了 {len(names)} 个工具"
                         collapsed = term.tool_calls_collapsed(names, desc)
                         if collapsed:
                             result = collapsed
@@ -603,7 +603,7 @@ class Engine:
 
                 # Abort on too many consecutive errors
                 if executor.consecutive_errors >= 5:
-                    yield ("error", f"Aborting: 5 consecutive tool failures")
+                    yield ("error", "中止: 连续 5 次工具执行失败")
                     self._flush_tool_results(all_results)
                     return
 
@@ -625,7 +625,7 @@ class Engine:
 
                 # All denied + no text → stop
                 if executor.all_denied and not full_text:
-                    yield ("text", "All tool calls denied by permission system.")
+                    yield ("text", "所有工具调用都被权限系统拒绝。")
                     break
 
         except KeyboardInterrupt:
@@ -639,7 +639,7 @@ class Engine:
             import traceback
             traceback.print_exc()
             self.cancel_turn()
-            yield ("error", "Internal error — turn cancelled. Please try again.")
+            yield ("error", "内部错误——本轮已取消，请重试。")
 
     # ------------------------------------------------------------------
     # Tool result display
@@ -649,7 +649,7 @@ class Engine:
         self, name: str, args: dict[str, Any], result: str, elapsed: float = 0,
     ) -> tuple:
         """Return tool result event tuple (display handled by run())."""
-        is_err = "Error" in result or "error" in result or "denied" in result.lower()
+        is_err = "错误" in result or "Error" in result or "error" in result or "denied" in result.lower()
         line = term.tool_done(result) if not is_err else term.tool_error(result)
         if elapsed >= 0.1:
             line += term.tool_timing(elapsed)

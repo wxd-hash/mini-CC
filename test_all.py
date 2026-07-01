@@ -613,7 +613,7 @@ def test_agent_all_tools_denied():
         result = agent.run("create a file")
 
         assert result is not None
-        assert "denied" in result.lower()
+        assert "拒绝" in result
         assert provider._call_count == 1  # stops after denial, no second API call
 
         log.close()
@@ -916,7 +916,7 @@ def test_streaming_executor_all_denied():
 
         result = agent.run("create file x")
         assert result is not None
-        assert "denied" in result.lower()
+        assert "拒绝" in result
         assert provider._call_count == 1  # stops after denial
 
         log.close()
