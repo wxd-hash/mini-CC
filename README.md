@@ -11,14 +11,14 @@
 - **并行工具执行** — 只读工具（read/search/list）ThreadPoolExecutor 并行批处理，写入工具串行
 - **智能上下文压缩** — 五层压缩（Snip / Micro / Collapse / Auto / Reactive），选择性白名单 + 时间屏蔽 + 结果预算 + 结构化摘要，不丢关键信息
 - **重试机制** — 指数退避 + jitter，最多 10 次重试，自动处理限流/超时/上下文溢出
-- **11 个工具** — read_file, write_file, edit_file, list_files, search_files, git_diff, run_shell, web_fetch, ask_user, todo_write, todo_update
+- **12 个工具** — read_file, write_file, edit_file, list_files, search_files, git_diff, run_shell, web_fetch, ask_user, todo_write, todo_update, Skill
 - **流式输出** — 实时逐字显示，不用等完整生成
 - **双层权限系统** — 自杀防护（taskkill /IM python 永不允许）+ 高危命令检测 + 键盘菜单确认
 - **会话持久化** — SessionStore 自动保存，按 workspace 组织，支持 --resume 恢复
 - **双 LLM 后端** — DeepSeek + OpenAI 兼容协议
 - **系统提示** — 全中文，内置 Shell 防循环规则
 - **KAIROS 记忆** — 子 Agent 自动提取 + 独立文件存储 + frontmatter + MEMORY.md 索引
-- **Skills 系统** — SKILL.md 文件自动发现 + frontmatter + 参考文件；内建 /review /commit /test /simplify
+- **Skills 系统** — 模型自主调用（Skill 工具）+ 用户斜杠命令，双入口触发；支持 SKILL.md 自动发现 + frontmatter + 参考文件；内建 /review /commit /test /simplify
 - **Plan 模式** — 子 agent 探索代码库后再实施
 - **多源配置** — CLI 参数 > 环境变量 > TOML 文件
 - **/init 命令** — 自动分析项目并生成 CLAUDE.md，后续对话无感维护
@@ -184,6 +184,7 @@ python main.py
 | `ask_user` | `question`, `header`, `options` | 向用户提问选择 |
 | `todo_write` | `tasks` | 拆分跟踪复杂任务 |
 | `todo_update` | `updates` | 更新任务状态 |
+| `Skill` | `name`, `args?` | 模型自主调用技能（如 Skill(name="review")） |
 
 ### run_shell 特性
 
@@ -280,6 +281,7 @@ mini-claude-code/
 │   │   ├── file_tools.py           # ReadFile, WriteFile, FileEditTool, ListFiles, SearchFiles
 │   │   ├── shell_tool.py           # RunShell（后台/超时/exit code 语义）
 │   │   ├── git_tools.py            # GitDiff
+│   │   ├── skill_tool.py           # SkillTool（模型自主调用技能）
 │   │   └── safety.py               # StuckDetector + StaleReadDetector
 │   ├── features/
 │   │   ├── memory.py               # KAIROS 记忆系统

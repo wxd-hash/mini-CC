@@ -4,7 +4,7 @@
 
 Mini Claude Code（以下简称 minicc）是一个终端编程助手，你用自然语言告诉它要做什么，它会自主读取文件、搜索代码、运行命令、修改文件，直到任务完成。
 
-核心设计参考了 Anthropic 官方的 Claude Code CLI 工具，但用纯 Python 实现，约 5600 行源码，零 Web 框架依赖。
+核心设计参考了 Anthropic 官方的 Claude Code CLI 工具，但用纯 Python 实现，约 6800 行源码，零 Web 框架依赖。
 
 ### 一句话理解它
 
@@ -139,7 +139,7 @@ minicc 的系统提示是分块拼接的：
 4. **is_read_only()**：返回 True 表示这个工具不会修改任何东西，可以并行执行
 5. **get_activity_description()**：执行时终端上显示的简短描述
 
-### 4.2 十一个工具
+### 4.2 十二个工具
 
 | 工具 | 用途 | 并发 |
 |------|------|------|
@@ -154,6 +154,7 @@ minicc 的系统提示是分块拼接的：
 | ask_user | 向用户提问选择（2-4 个选项，键盘菜单） | 是 |
 | todo_write | 创建/替换任务列表，拆分复杂任务 | 否 |
 | todo_update | 更新任务状态 | 否 |
+| Skill | 模型自主调用已注册技能（如 Skill(name="review")） | 是 |
 
 ### 4.3 edit_file —— 为什么需要它
 
@@ -376,16 +377,25 @@ base_url = "https://api.deepseek.com/v1"
 
 ## 十一、Skills 技能系统
 
-Skills 参考了 Claude Code 的 SKILL.md 架构——不只是提示词注入。
+Skills 参考了 Claude Code 的 SKILL.md 架构——不只是提示词注入，更支持**模型自主调用**。
 
-### 11.1 内建 Skills
+### 11.1 两种触发方式
+
+| 触发方式 | 说明 |
+|----------|------|
+| **模型自主调用** | 模型判断任务匹配 Skill 用途时，主动调用 `Skill(name="review")` 工具 |
+| **用户斜杠命令** | 用户手动输入 `/review`，效果相同 |
+
+系统提示词中列出了可用 Skill，模型看到后自行判断何时调用。不需要用户记住命令。
+
+### 11.2 内建 Skills
 
 - `/review` — 代码审查：git diff → 检查 bug/安全/可改进处
 - `/commit` — 提交代码：生成 commit message → git add → git commit
 - `/test` — 运行测试：找到测试文件 → pytest → 报告
 - `/simplify` — 代码优化：git diff → 找重复/过度复杂 → 简化
 
-### 11.2 自定义 Skills（SKILL.md）
+### 11.3 自定义 Skills（SKILL.md）
 
 在项目目录或用户目录下创建 SKILL.md 文件即可注册新 skill。支持 YAML frontmatter 设定名称和描述：
 
@@ -615,9 +625,9 @@ CLAUDE.md 的维护对用户完全无感：
 
 | 指标 | 数值 |
 |------|------|
-| 核心源码 | ~6000 行 Python |
-| 文件数 | 36 个源文件 |
-| 工具 | 11 个 |
+| 核心源码 | ~6800 行 Python |
+| 文件数 | 38 个源文件 |
+| 工具 | 12 个 |
 | 内建 Skills | 4 个 |
 | LLM Provider | 2 个 |
 | 权限模式 | 3 种 |
@@ -629,7 +639,7 @@ CLAUDE.md 的维护对用户完全无感：
 
 ---
 
-## 十七、Docker 部署
+## 十八、Docker 部署
 
 minicc 提供了完整的 Docker 支持，可以在 Linux 容器中运行，无需本地安装 Python。
 

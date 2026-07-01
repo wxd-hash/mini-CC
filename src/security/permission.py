@@ -283,13 +283,13 @@ class PermissionChecker:
         return "deny"
 
     def _check_plan(self, tool_name: str) -> str:
-        if tool_name in ("read_file", "list_files", "search_files", "git_diff"):
+        if tool_name in ("read_file", "list_files", "search_files", "git_diff", "Skill"):
             return "allow"
         self._deny_msg(tool_name)
         return "deny"
 
     # Internal tools that are always allowed (matching claude-code)
-    _INTERNAL_TOOLS = {"ask_user", "todo_write", "todo_update"}
+    _INTERNAL_TOOLS = {"ask_user", "todo_write", "todo_update", "Skill"}
 
     def _check_ask(self, tool_name: str, tool_input: dict[str, Any]) -> str:
         if tool_name in self._INTERNAL_TOOLS:
