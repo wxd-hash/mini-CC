@@ -65,9 +65,9 @@ def run(args) -> None:
         sessions_dir=args.log_dir,
     )
 
-    # -- TraceLogger (unified event tracing) ---------------------------------
+    # -- TraceLogger (unified event tracing, shares SessionStore's file) ------
     from src.session.trace import TraceLogger
-    trace = _make_trace_logger(args.log_dir, str(workspace.root))
+    trace = TraceLogger(session_store._path)  # same file, no duplicate
     # Record session metadata
     trace.session_start(
         workspace=str(workspace.root),

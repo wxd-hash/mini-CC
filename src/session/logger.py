@@ -36,8 +36,9 @@ class SessionMeta:
 class SessionStore:
     """Auto-save session messages to a JSONL file + meta.json.
 
-    Matches cc-mini's SessionStore: append_message() on every turn,
-    list_sessions() for resume picker, load_session() for restore.
+    Lazy materialization (matches Claude Code): the file is NOT created
+    until the first message is written. On resume, adopt() points to the
+    existing file without creating anything new.
     """
 
     MAX_MESSAGE_CHARS = 8000
@@ -60,13 +61,12 @@ class SessionStore:
         if sessions_dir is None:
             sessions_dir = Path.cwd() / ".sessions"
         self._dir = sessions_dir / self._ws_name
-        self._dir.mkdir(parents=True, exist_ok=True)
         self._path = self._dir / f"session-{session_id}.jsonl"
         self._meta_path = self._dir / f"session-{session_id}.meta.json"
-        self._file = self._path.open("a", encoding="utf-8")
+        self._file = None          # lazily opened
+        self._pending: list[dict[str, Any]] = []  # buffer before materialize
         self._msg_count = 0
         self._first_user_text = ""
-        self._write_meta()
 
     # -- properties -----------------------------------------------------------
 
@@ -78,10 +78,45 @@ class SessionStore:
     def title(self) -> str:
         return self._first_user_text[:60] if self._first_user_text else "(new session)"
 
+    # -- lifecycle ------------------------------------------------------------
+
+    def adopt(self, path: Path) -> None:
+        """Adopt an existing session file (for resume). No file is created.
+        Subsequent append_message() calls append to this file."""
+        self._path = path
+        self._meta_path = path.with_suffix(".meta.json")
+        stem = path.stem
+        if stem.startswith("session-"):
+            self.session_id = stem[len("session-"):]
+        # Load existing first_user_text from meta if available
+        try:
+            if self._meta_path.exists():
+                data = json.loads(self._meta_path.read_text(encoding="utf-8"))
+                self._first_user_text = data.get("title", "")
+        except Exception:
+            pass
+
+    def _materialize(self) -> None:
+        """Create the session file on first write (lazy)."""
+        if self._file is not None:
+            return
+        self._dir.mkdir(parents=True, exist_ok=True)
+        self._file = self._path.open("a", encoding="utf-8")
+        self._write_meta()
+        # Flush buffered entries
+        for entry in self._pending:
+            self._file.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+        self._file.flush()
+        self._pending.clear()
+
+    @property
+    def is_materialized(self) -> bool:
+        return self._file is not None
+
     # -- message persistence --------------------------------------------------
 
     def append_message(self, message: dict[str, Any]) -> None:
-        """Append one message to the session JSONL file."""
+        """Append one message to the session JSONL file (lazy-create if needed)."""
         try:
             role = message.get("role", "?")
             content = message.get("content", "")
@@ -98,39 +133,35 @@ class SessionStore:
                 "role": role,
                 "content": stored_content,
             }
-            line = json.dumps(entry, ensure_ascii=False, default=str)
-            self._file.write(line + "\n")
-            self._file.flush()
+
+            if not self.is_materialized:
+                self._pending.append(entry)
+                # Defer file creation until we have user content
+            else:
+                line = json.dumps(entry, ensure_ascii=False, default=str)
+                self._file.write(line + "\n")
+                self._file.flush()
+
             self._msg_count += 1
 
             # Capture first user text as session title
             if not self._first_user_text and role == "user":
                 text = content if isinstance(content, str) else str(content)[:100]
                 self._first_user_text = text.split("\n")[0].strip()
-                self._write_meta()
+                if not self.is_materialized:
+                    self._materialize()
+                else:
+                    self._write_meta()
         except Exception:
             pass  # don't break the conversation on I/O errors
 
     def close(self) -> None:
         try:
-            self._file.close()
+            if self._file is not None:
+                self._file.close()
+                self._file = None
         except Exception:
             pass
-
-    def reopen(self, path: Path) -> None:
-        """Reopen this store to append to an existing session file.
-
-        Used after session resume to continue writing to the original file
-        instead of creating a duplicate.
-        """
-        self.close()
-        self._path = path
-        self._file = path.open("a", encoding="utf-8")
-        # Update session_id from the file name
-        stem = path.stem  # e.g. "session-20260701T083029Z"
-        if stem.startswith("session-"):
-            self.session_id = stem[len("session-"):]
-        self._write_meta()
 
     # -- metadata -------------------------------------------------------------
 
@@ -266,6 +297,7 @@ class SessionLogger:
         self._trace: Any = trace if trace is not None else _TL(path, workspace=workspace)
 
     def user_input(self, content: str) -> None:
+        self._trace._materialize()  # lazy-create file on first user message
         self._trace.user_input(content)
 
     def assistant_text(self, content: str) -> None:

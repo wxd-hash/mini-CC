@@ -29,6 +29,7 @@ class TraceLogger:
     """Structured event tracer writing to a rotating JSONL file.
 
     Thread-safe. Auto-rotates when file exceeds 50 MB.
+    Lazy materialization: file is not created until first event is emitted.
     """
 
     MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
@@ -38,13 +39,48 @@ class TraceLogger:
         self._lock = threading.Lock()
         self._seq = 0
         self._dir = path.parent
-
-        self._dir.mkdir(parents=True, exist_ok=True)
-        self._file = open(path, "a", encoding="utf-8")
-        self._open_time = time.monotonic()
+        self._file = None         # lazily opened
+        self._pending: list[dict[str, Any]] = []  # buffer before materialize
+        self._pending_meta: dict[str, Any] = {}    # workspace/provider/model/mode for session_start
 
         if workspace:
-            self.session_start(workspace=workspace)
+            self._pending_meta = {
+                "workspace": workspace,
+                "provider": "",
+                "model": "",
+                "mode": "ask",
+            }
+
+    # -- lifecycle ------------------------------------------------------------
+
+    def adopt(self, path: Path) -> None:
+        """Adopt an existing session file (for resume).
+        Discards any buffered pending events — the resumed file already
+        has its own session_start and history."""
+        self._path = path
+        self._dir = path.parent
+        self._pending.clear()
+        self._pending_meta.clear()
+
+    def _materialize(self) -> None:
+        """Create the file and flush pending entries on first write."""
+        if self._file is not None:
+            return
+        self._dir.mkdir(parents=True, exist_ok=True)
+        self._file = open(self._path, "a", encoding="utf-8")
+
+        # Emit session_start if metadata was provided
+        if self._pending_meta:
+            self.session_start(**self._pending_meta)
+            self._pending_meta.clear()
+
+        # Flush buffered events
+        for entry in self._pending:
+            self._file.write(
+                json.dumps(entry, ensure_ascii=False, default=str) + "\n"
+            )
+        self._file.flush()
+        self._pending.clear()
 
     # ------------------------------------------------------------------
     # Public API — one method per event type
@@ -57,6 +93,16 @@ class TraceLogger:
         model: str = "",
         mode: str = "ask",
     ) -> None:
+        # If not materialized yet, update pending_meta instead of buffering
+        # a separate event. This avoids duplicate session_start on materialize.
+        if self._file is None:
+            self._pending_meta = {
+                "workspace": workspace,
+                "provider": provider,
+                "model": model,
+                "mode": mode,
+            }
+            return
         self._emit("session_start", {
             "workspace": workspace,
             "provider": provider,
@@ -279,7 +325,9 @@ class TraceLogger:
     def close(self) -> None:
         with self._lock:
             try:
-                self._file.close()
+                if self._file is not None:
+                    self._file.close()
+                    self._file = None
             except Exception:
                 pass
 
@@ -298,6 +346,9 @@ class TraceLogger:
     def _emit(self, event_type: str, data: dict[str, Any]) -> None:
         entry = {"type": event_type, "ts": _utc_now(), "seq": self._next_seq()}
         entry.update(data)
+        if self._file is None:
+            self._pending.append(entry)
+            return
         line = json.dumps(entry, ensure_ascii=False, default=str) + "\n"
         with self._lock:
             self._file.write(line)

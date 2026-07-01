@@ -222,41 +222,16 @@ class Engine:
     def set_sessions_dir(self, path: Path) -> None:
         self._sessions_dir = path
 
-    def reopen_session(self, path: Path) -> None:
-        """After resume: point session_store + trace to the existing file.
-        Deletes the temporary empty files created during startup."""
-        import os as _os
-        old_store_path = None
-        old_trace_path = None
-
-        # Re-point session store to the resumed file
+    def switch_session(self, path: Path) -> None:
+        """Adopt an existing session file (for resume). Pure in-memory switch:
+        no temp files are created or deleted. Matches Claude Code's
+        switchSession + adoptResumedSessionFile pattern."""
         if self._session_store:
-            old_store_path = self._session_store._path
-            self._session_store.reopen(path)
-
-        # Re-point trace logger to the resumed file
+            self._session_store.adopt(path)
         if self._trace:
-            old_trace_path = self._trace.path
-            self._trace.close()
-            from src.session.trace import TraceLogger
-            self._trace = TraceLogger(path)
-            # Update SessionLogger's internal trace reference too
-            if self._logger:
-                self._logger._trace = self._trace
-
-        # Clean up the temporary empty files created at startup
-        for old_path in (old_store_path, old_trace_path):
-            if old_path and old_path != path and old_path.exists():
-                try:
-                    # Only delete if it's empty or has only minimal content
-                    size = old_path.stat().st_size
-                    if size < 500:  # Less than 500 bytes = essentially empty
-                        old_path.unlink()
-                        # Also clean up meta file
-                        meta = old_path.with_suffix(".meta.json")
-                        meta.unlink(missing_ok=True)
-                except OSError:
-                    pass
+            self._trace.adopt(path)
+        if self._logger:
+            self._logger._trace = self._trace
 
     # -- abort support ------------------------------------------------------
 
