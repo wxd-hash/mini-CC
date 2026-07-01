@@ -500,6 +500,91 @@ class SearchFiles(Tool):
         return header + "\n".join(results)
 
 
+class GlobTool(Tool):
+    """Fast file pattern matching using glob patterns.
+
+    Matches Claude Code's Glob tool: finds files by pattern (e.g. "src/**/*.ts")
+    without needing shell find/ls commands.
+    """
+
+    MAX_RESULTS = 500
+    MAX_RESULT_CHARS = 8_000
+
+    def __init__(self, workspace_dir: Path) -> None:
+        self._ws = workspace_dir
+
+    @property
+    def name(self) -> str:
+        return "glob"
+
+    @property
+    def description(self) -> str:
+        return (
+            "按通配符模式匹配文件路径。用于快速查找文件，比 list_files 更精准。"
+            "支持 ** 递归匹配。示例："
+            'pattern="src/**/*.py" 查找 src 下所有 Python 文件；'
+            'pattern="*.md" 查找当前目录下所有 Markdown 文件。'
+        )
+
+    @property
+    def input_schema(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "pattern": {
+                    "type": "string",
+                    "description": "文件匹配模式，支持通配符 *, **, ?, []。如 src/**/*.py 或 **/*.md",
+                },
+            },
+            "required": ["pattern"],
+        }
+
+    @property
+    def maxResultSizeChars(self) -> int | None:
+        return self.MAX_RESULT_CHARS
+
+    def is_read_only(self) -> bool:
+        return True
+
+    def get_activity_description(self, **kwargs: Any) -> str | None:
+        return f"glob({kwargs.get('pattern', '*')})"
+
+    def execute(self, pattern: str = "", **kwargs: Any) -> ToolResult:
+        ws = self._ws
+        try:
+            matches = sorted(ws.glob(pattern))
+        except Exception as e:
+            return ToolResult(content=f"Glob 模式错误: {e}", is_error=True)
+
+        if not matches:
+            return ToolResult(content=f"没有匹配 '{pattern}' 的文件")
+
+        # Compute name column width for alignment
+        max_name_len = max((len(m.name) for m in matches), default=20)
+        lines = []
+        count = 0
+        for m in matches:
+            if count >= self.MAX_RESULTS:
+                lines.append(f"... (还有 {len(matches) - self.MAX_RESULTS} 个结果未显示)")
+                break
+            rel = str(m.relative_to(ws)).replace("\\", "/")
+            try:
+                size = m.stat().st_size
+                size_str = _fmt_size(size)
+            except OSError:
+                size_str = "?"
+            name_part = m.name.ljust(max_name_len + 2)
+            lines.append(f"{rel}  ({size_str})")
+            count += 1
+
+        header = f"匹配 '{pattern}': {len(matches)} 个文件\n\n"
+        body = "\n".join(lines)
+        result = header + body
+        if len(result) > self.MAX_RESULT_CHARS:
+            result = result[:self.MAX_RESULT_CHARS] + "\n... [truncated]"
+        return ToolResult(content=result)
+
+
 # ---------------------------------------------------------------------------
 # Self-test (call from main.py at startup)
 # ---------------------------------------------------------------------------
