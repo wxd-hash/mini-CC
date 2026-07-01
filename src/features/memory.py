@@ -265,26 +265,42 @@ def _start_extraction_thread(
     model: str,
 ) -> None:
     """Launch extraction in a background daemon thread."""
+    trace = getattr(main_engine, '_trace', None)
+
     # Check if main agent already wrote to memory this turn
     if _main_agent_already_wrote(messages, memory_dir):
+        if trace:
+            trace.memory_extract(skipped=True, reason="main_agent_wrote")
         return
 
     # Check if enough new content to warrant extraction
     if not _should_extract(messages, memory_dir):
+        if trace:
+            trace.memory_extract(skipped=True, reason="not_enough_content")
         return
 
     # Lock to prevent concurrent extractions
     if not _try_acquire_lock(memory_dir):
+        if trace:
+            trace.memory_extract(skipped=True, reason="locked")
         return
 
     def _run():
+        _ts = time.time()
+        _cleaned = 0
         try:
-            _cleanup_orphaned_files(memory_dir)
+            _cleaned = _cleanup_orphaned_files(memory_dir)
             _do_extraction(main_engine, memory_dir, messages, provider_factory, model)
         except Exception:
             pass
         finally:
             _release_lock(memory_dir)
+            if trace:
+                trace.memory_extract(
+                    cleaned=_cleaned,
+                    skipped=False,
+                    elapsed_ms=(time.time() - _ts) * 1000,
+                )
 
     threading.Thread(target=_run, daemon=True).start()
 

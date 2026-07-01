@@ -385,6 +385,10 @@ def handle_skill_command(skill_name: str, args: str, engine: Any) -> None:
         print(term.info("Type /skills to see available skills."))
         return
 
+    # Trace: skill_invoke (slash-command triggered)
+    if getattr(engine, '_trace', None):
+        engine._trace.skill_invoke(skill_name=skill_name, args=args)
+
     prompt = skill.get_prompt(args)
     if not prompt:
         print(term.info(f"Skill /{skill_name} has no prompt content."))
@@ -424,56 +428,70 @@ def handle_command(
 ) -> bool:
     """Dispatch a slash command. Returns True if handled, False if not a command."""
     cmd = cmd_name.lower()
+    trace = getattr(engine, '_trace', None)
 
     if cmd in ("exit", "quit"):
+        if trace: trace.repl_command(cmd, cmd_args)
         return True  # caller handles exit
 
     if cmd == "init":
-        return _handle_init(engine, cmd_args)
+        result = _handle_init(engine, cmd_args)
+        if trace: trace.repl_command(cmd, cmd_args)
+        return result
 
     if cmd == "perm":
         handle_perm(permission, cmd_args, engine)
+        if trace: trace.repl_command(cmd, cmd_args)
         return True
 
     if cmd == "tools":
         handle_tools(registry)
+        if trace: trace.repl_command(cmd, cmd_args)
         return True
 
     if cmd == "tool":
         handle_tool(registry, permission, cmd_args)
+        if trace: trace.repl_command(cmd, cmd_args)
         return True
 
     if cmd == "clear":
         if engine:
             engine.clear()
+        if trace: trace.repl_command(cmd, cmd_args)
         return True
 
     if cmd == "reload":
         if engine:
             engine.reload()
+        if trace: trace.repl_command(cmd, cmd_args)
         return True
 
     if cmd == "compact":
         if engine:
             engine._maybe_compact()
+        if trace: trace.repl_command(cmd, cmd_args)
         return True
 
     if cmd == "skills":
         handle_skills()
+        if trace: trace.repl_command(cmd, cmd_args)
         return True
 
     if cmd == "history":
         handle_history(log_dir, workspace)
+        if trace: trace.repl_command(cmd, cmd_args)
         return True
 
     if cmd in ("review", "commit", "test", "simplify"):
         handle_skill_command(cmd, cmd_args, engine)
+        if trace: trace.repl_command(cmd, cmd_args)
         return True
 
     if cmd == "plan":
         print(term.info("Plan mode: describe what you want to plan, e.g. /plan add authentication"))
         if cmd_args.strip():
             engine.run(f"Plan: {cmd_args.strip()}")
+        if trace: trace.repl_command(cmd, cmd_args)
         return True
 
     return False

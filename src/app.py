@@ -65,8 +65,19 @@ def run(args) -> None:
         sessions_dir=args.log_dir,
     )
 
-    # -- Legacy logger (keep for backward compat) ---------------------------
-    logger = _make_logger(args.log_dir, str(workspace.root))
+    # -- TraceLogger (unified event tracing) ---------------------------------
+    from src.session.trace import TraceLogger
+    trace = _make_trace_logger(args.log_dir, str(workspace.root))
+    # Record session metadata
+    trace.session_start(
+        workspace=str(workspace.root),
+        provider=app_config.provider,
+        model=app_config.model,
+        mode=args.mode,
+    )
+
+    # -- Legacy logger (delegates to TraceLogger for backward compat) ---------
+    logger = SessionLogger(trace.path, str(workspace.root), trace=trace)
 
     # -- Tool registry ------------------------------------------------------
     registry = ToolRegistry()
@@ -146,6 +157,7 @@ def run(args) -> None:
         tool_registry=registry,
         workspace_dir=workspace.root,
         logger=logger,
+        trace=trace,
         memory_dir=memory_dir,
         provider_factory=lambda: _make_provider(args, app_config),
     )
@@ -198,6 +210,15 @@ def _make_provider(args, app_config: AppConfig):
     if app_config.api_key:
         os.environ["ANTHROPIC_API_KEY"] = app_config.api_key
     return AnthropicProvider(model=model)
+
+
+def _make_trace_logger(log_dir: Path, workspace: str = "") -> "TraceLogger":
+    from src.session.logger import _workspace_dir_name
+    from src.session.trace import TraceLogger
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    ws_dir = log_dir / (_workspace_dir_name(workspace) if workspace else "_default")
+    ws_dir.mkdir(parents=True, exist_ok=True)
+    return TraceLogger(ws_dir / f"session-{ts}.jsonl")
 
 
 def _make_logger(log_dir: Path, workspace: str = "") -> SessionLogger:

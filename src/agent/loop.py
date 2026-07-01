@@ -136,6 +136,7 @@ class Engine:
         tool_registry: Any = None,
         workspace_dir: Path | None = None,
         logger: SessionLogger | None = None,
+        trace: Any = None,
         memory_dir: Path | None = None,
         provider_factory: Any = None,
     ) -> None:
@@ -150,6 +151,7 @@ class Engine:
         self._tool_registry = tool_registry
         self._workspace_dir = workspace_dir
         self._logger = logger
+        self._trace = trace  # unified TraceLogger for pipeline events
         self._memory_dir = memory_dir
         self._provider_factory = provider_factory
 
@@ -459,6 +461,14 @@ class Engine:
                     print(term.info("[auto-compacting conversation...]"), flush=True)
                     system = build_system_prompt(workspace_dir=self._workspace_dir, mode=self._permissions.mode.value)
 
+                    # Trace: compact_start
+                    if self._trace:
+                        self._trace.compact_start(
+                            reason="token",
+                            messages_before=before,
+                            estimated_tokens=estimate_tokens(self._messages),
+                        )
+
                     try:
                         self._messages = compact_messages(
                             provider=self._provider,
@@ -471,10 +481,15 @@ class Engine:
                         compact_tracking = {"compacted": True, "turn_counter": 0}
                         if self._logger:
                             self._logger.compact(before, after)
+                        # Trace: compact_done
+                        if self._trace:
+                            self._trace.compact_done(messages_after=after)
                         print(term.compact(before, after))
                     except Exception as e:
                         compact_failures += 1
                         print(term.error(f"Auto-compact failed ({e})"))
+                        if self._trace:
+                            self._trace.error("compact", str(e)[:200])
                         if compact_failures >= MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES:
                             print(term.info("[compaction circuit breaker tripped]"))
 
@@ -496,6 +511,7 @@ class Engine:
                     tools=self._tools,
                     permission_checker=self._permissions,
                     logger=self._logger,
+                    trace=self._trace,
                 )
                 _current_executor = executor
                 assistant_message: dict[str, Any] = {}
@@ -507,6 +523,32 @@ class Engine:
                     workspace_dir=self._workspace_dir,
                     mode=self._permissions.mode.value,
                 )
+
+                # Trace: log assembled system prompt with section breakdown
+                if self._trace:
+                    _sections = _analyze_prompt_sections(self._system_prompt)
+                    self._trace.system_prompt(
+                        sections=_sections,
+                        total_chars=len(self._system_prompt),
+                    )
+                    # Also write the full prompt text to the trace file for debugging
+                    self._trace._emit("system_prompt_full", {
+                        "text": self._system_prompt[:5000],
+                        "truncated": len(self._system_prompt) > 5000,
+                    })
+
+                # Trace: log API request
+                _api_start = time.monotonic()
+                _text_chunks = 0
+                _tool_calls_count = 0
+                if self._trace:
+                    self._trace.api_request(
+                        model=self._model,
+                        max_tokens=self._max_tokens,
+                        message_count=len(self._messages),
+                        estimated_tokens=estimate_tokens(self._messages),
+                        attempt=0,
+                    )
 
                 # Signal that we're about to wait for API
                 yield ("waiting_api",)
@@ -539,17 +581,30 @@ class Engine:
                     messages=self._messages,
                     tools=tools,
                     max_tokens=self._max_tokens,
+                    trace=self._trace,
                 ):
                     if isinstance(stream_event, TextDelta):
+                        _text_chunks += 1
                         full_text += stream_event.text
                         yield ("text", stream_event.text)
 
                     elif isinstance(stream_event, ToolUseBlock):
+                        _tool_calls_count += 1
                         tool_uses_seen = True
                         tool = self._tools.get(stream_event.name)
                         activity = tool.get_activity_description(**stream_event.arguments) if tool else None
                         is_read = tool.is_read_only() if tool else False
+                        is_skill = stream_event.name == "Skill"
                         args_fmt = self._fmt_params(stream_event.arguments)
+
+                        # Trace: tool_start
+                        if self._trace:
+                            self._trace.tool_start(
+                                tool_name=stream_event.name,
+                                args_summary=args_fmt,
+                                is_read_only=is_read,
+                                is_skill=is_skill,
+                            )
 
                         if is_read:
                             _buf_read_tools.append((stream_event.name, args_fmt, activity or ""))
@@ -574,12 +629,39 @@ class Engine:
                                 yield ("tool_display", buf_display)
                             if self._logger:
                                 self._logger.tool_result(name, content)
+                            # Trace: tool_done + skill_invoke
+                            if self._trace:
+                                is_skill = name == "Skill"
+                                if is_skill:
+                                    self._trace.skill_invoke(
+                                        skill_name=args.get("name", name) if args else name,
+                                        args=args.get("args", "") if args else "",
+                                        elapsed_ms=elapsed * 1000,
+                                    )
+                                self._trace.tool_done(
+                                    tool_name=name,
+                                    result_preview=content[:300],
+                                    elapsed_ms=elapsed * 1000,
+                                    is_error=("Error" in content or "错误" in content),
+                                )
                             yield self._show_tool_result_tu(name, args, content, elapsed)
 
                     elif isinstance(stream_event, StreamEnd):
                         assistant_message = stream_event.assistant_message
                         if stream_event.text and not tool_uses_seen:
                             full_text = stream_event.text
+
+                # Trace: API stream done
+                _api_latency = int((time.monotonic() - _api_start) * 1000)
+                if self._trace:
+                    self._trace.api_stream_done(
+                        text_chunks=_text_chunks,
+                        tool_calls_count=_tool_calls_count,
+                    )
+                    self._trace.api_response(
+                        latency_ms=_api_latency,
+                        status="ok",
+                    )
 
                 # Signal end of text stream
                 if full_text:
@@ -592,6 +674,21 @@ class Engine:
                 for result_id, name, args, content, elapsed in executor.get_remaining_results():
                     if self._logger:
                         self._logger.tool_result(name, content)
+                    # Trace: tool_done (for remaining results)
+                    if self._trace:
+                        is_skill = name == "Skill"
+                        if is_skill:
+                            self._trace.skill_invoke(
+                                skill_name=args.get("name", name) if args else name,
+                                args=args.get("args", "") if args else "",
+                                elapsed_ms=elapsed * 1000,
+                            )
+                        self._trace.tool_done(
+                            tool_name=name,
+                            result_preview=content[:300],
+                            elapsed_ms=elapsed * 1000,
+                            is_error=("Error" in content or "错误" in content),
+                        )
                     yield self._show_tool_result_tu(name, args, content, elapsed)
 
                 # Check for abort after tool execution
@@ -689,3 +786,67 @@ class Engine:
         if len(s) <= n:
             return s
         return s[:n] + "..."
+
+
+def _analyze_prompt_sections(prompt: str) -> dict[str, int]:
+    """Break the assembled system prompt into named sections for trace logging.
+
+    Looks for markdown headings (## Section), XML tags (<tag>...</tag>),
+    and other structural markers to estimate the size of each component.
+    """
+    sections: dict[str, int] = {}
+    current = "_base"
+    lines = prompt.split("\n")
+    base_lines: list[str] = []
+    memory_lines: list[str] = []
+    instructions_lines: list[str] = []
+    skills_lines: list[str] = []
+    plan_lines: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        # XML section boundaries
+        if stripped == "<project_instructions>":
+            current = "instructions"
+            continue
+        elif stripped == "</project_instructions>":
+            current = "_base"
+            continue
+        elif stripped == "<project_memory>":
+            current = "memory"
+            continue
+        elif stripped == "</project_memory>":
+            current = "_base"
+            continue
+        elif stripped == "<available_skills>" or stripped.startswith("## Available Skills"):
+            current = "skills"
+            continue
+        elif stripped == "</available_skills>":
+            current = "_base"
+            continue
+        # Plan mode section
+        elif stripped.startswith("## Plan 模式"):
+            current = "plan"
+            continue
+
+        if current == "memory":
+            memory_lines.append(line)
+        elif current == "instructions":
+            instructions_lines.append(line)
+        elif current == "skills":
+            skills_lines.append(line)
+        elif current == "plan":
+            plan_lines.append(line)
+        else:
+            base_lines.append(line)
+
+    sections["base"] = sum(len(l) + 1 for l in base_lines)
+    if instructions_lines:
+        sections["instructions"] = sum(len(l) + 1 for l in instructions_lines)
+    if memory_lines:
+        sections["memory"] = sum(len(l) + 1 for l in memory_lines)
+    if skills_lines:
+        sections["skills"] = sum(len(l) + 1 for l in skills_lines)
+    if plan_lines:
+        sections["plan"] = sum(len(l) + 1 for l in plan_lines)
+    return sections

@@ -72,9 +72,10 @@ MEMORY.md 会被注入到后续所有对话的系统提示中。
 ## Skills（技能调用）
 你有可用的技能（Skills），每个技能是一段预设的专业提示词。
 - 用 Skill 工具调用：Skill(name="技能名")，可选传 args 参数
-- 当你判断某个 Skill 适合当前任务时主动调用——不要等用户提醒
+- **主动调用**：当用户说"帮我 review 代码"、"提交一下"、"跑测试"、"简化代码"时，
+  自己判断匹配哪个技能，立刻调用 Skill 工具，不要当普通请求处理
 - 调用后你会收到该技能的完整指令，按指令逐步执行
-- 不要编造技能名称——只使用系统提示词底部 <available_skills> 中列出的
+- 不要编造技能名称——只使用下方 ## Available Skills 中列出的
 - 用户也可以直接输入 /skill-name 手动触发，效果相同"""
 
 # Limits
@@ -242,6 +243,12 @@ def build_system_prompt(
     memory = load_memory(memory_dir)
     if memory:
         parts.append(f"<project_memory>\n{memory}\n</project_memory>")
+
+    # Available skills — always include so model can call Skill tool
+    from src.features.skills import build_skills_prompt_section
+    skills_section = build_skills_prompt_section()
+    if skills_section:
+        parts.append(skills_section)
 
     return "\n\n".join(parts)
 

@@ -101,6 +101,7 @@ def call_model_with_retry(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
     max_tokens: int,
+    trace: Any = None,
 ) -> Iterator[TextDelta | ToolUseBlock | StreamEnd]:
     """Call the model with retry logic. Yields stream events.
 
@@ -128,6 +129,8 @@ def call_model_with_retry(
             err_msg = str(exc)
 
             if _is_auth_error(exc):
+                if trace:
+                    trace.api_retry(attempt=attempt, error=err_msg[:200])
                 yield StreamEnd(
                     assistant_message={},
                     text=f"认证失败: {err_msg}",
@@ -138,9 +141,13 @@ def call_model_with_retry(
                 reduced = current_max_tokens // 2
                 if reduced >= 1024:
                     current_max_tokens = reduced
+                    if trace:
+                        trace.api_retry(attempt=attempt, error="context_overflow", new_max_tokens=reduced)
                     if attempt >= _HIDE_RETRY_UNTIL_ATTEMPT:
                         yield TextDelta(f"\n[上下文溢出 → max_tokens={reduced}, 重试中...]\n")
                     continue
+                if trace:
+                    trace.api_retry(attempt=attempt, error=f"context_overflow_terminal: {err_msg[:100]}")
                 yield StreamEnd(
                     assistant_message={},
                     text=f"上下文溢出，无法再降低: {err_msg}",
@@ -150,10 +157,14 @@ def call_model_with_retry(
             if _is_retryable(err_msg, exc):
                 if attempt < MAX_RETRIES - 1:
                     wait = _compute_retry_delay(attempt, _parse_retry_after(exc))
+                    if trace:
+                        trace.api_retry(attempt=attempt, error=err_msg[:150], delay_ms=wait * 1000)
                     if attempt >= _HIDE_RETRY_UNTIL_ATTEMPT:
                         yield TextDelta(f"\n[API 错误, {wait:.1f}s 后重试...]\n")
                     time.sleep(wait)
                     continue
+                if trace:
+                    trace.api_retry(attempt=attempt, error=f"exhausted: {err_msg[:150]}")
                 yield StreamEnd(
                     assistant_message={},
                     text=f"重试 {MAX_RETRIES} 次后 API 仍然错误: {err_msg}",
@@ -161,6 +172,8 @@ def call_model_with_retry(
                 return
 
             # 未知错误——不重试
+            if trace:
+                trace.api_retry(attempt=attempt, error=err_msg[:150])
             yield StreamEnd(
                 assistant_message={},
                 text=f"API 错误: {err_msg}",

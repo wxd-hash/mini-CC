@@ -29,7 +29,13 @@ class SkillTool(Tool):
         skills = list_skills()
         if not skills:
             return "没有可用技能。"
-        lines = ["调用一个已注册的技能。可用技能："]
+        lines = [
+            "当用户的任务匹配某个内置技能时调用此工具。",
+            "例如：用户说'帮我review代码'→ 调 Skill(name=\"review\")",
+            "用户说'提交一下'→ 调 Skill(name=\"commit\")",
+            "用户说'跑个测试'→ 调 Skill(name=\"test\")",
+            "可用技能：",
+        ]
         for s in skills:
             lines.append(f"- {s.name}: {s.description}")
         return "\n".join(lines)

@@ -14,6 +14,10 @@ from pathlib import Path
 from typing import Any
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 # ---------------------------------------------------------------------------
 # SessionStore (matches cc-mini)
 # ---------------------------------------------------------------------------
@@ -235,58 +239,55 @@ class SessionStore:
 class SessionLogger:
     """Writes structured session events to a timestamped JSONL file.
 
-    Retained for backward compatibility with existing code that uses
-    the event-type API. New code should use SessionStore.
+    Now delegates to TraceLogger internally. Kept for backward compatibility
+    with existing code. New code should use TraceLogger directly.
     """
 
     MAX_RESULT_CHARS = 4000
 
-    def __init__(self, path: Path, workspace: str = "") -> None:
+    def __init__(self, path: Path, workspace: str = "", trace: Any = None) -> None:
+        from src.session.trace import TraceLogger as _TL
         self.path = path
-        self._file = path.open("a", encoding="utf-8")
-        if workspace:
-            self._write({"type": "session_start", "workspace": workspace})
+        self._trace: Any = trace if trace is not None else _TL(path, workspace=workspace)
 
     def user_input(self, content: str) -> None:
-        self._write({"type": "user_input", "content": content})
+        self._trace.user_input(content)
 
     def assistant_text(self, content: str) -> None:
         self._write({"type": "assistant_text", "content": content})
 
     def tool_use(self, name: str, args: dict[str, Any]) -> None:
-        self._write({"type": "tool_use", "name": name, "args": args})
+        self._trace.tool_start(name, _fmt_tool_args(args) if args else "")
 
     def tool_result(self, name: str, content: str) -> None:
         if len(content) > self.MAX_RESULT_CHARS:
             content = content[: self.MAX_RESULT_CHARS] + (
                 f"\n... [truncated at {self.MAX_RESULT_CHARS} chars in log]"
             )
-        self._write({"type": "tool_result", "name": name, "content": content})
+        self._trace.tool_done(name, result_preview=content[:300])
 
     def permission_denied(self, name: str) -> None:
-        self._write({"type": "permission_denied", "name": name})
+        self._trace.tool_permission(name, "", "deny", "")
 
     def error(self, message: str) -> None:
-        self._write({"type": "error", "message": message})
+        self._trace.error("tool", message)
 
     def compact(self, events_before: int, events_after: int) -> None:
-        self._write({
-            "type": "compact",
-            "events_before": events_before,
-            "events_after": events_after,
-        })
+        self._trace.compact_done(events_after)
 
     def close(self) -> None:
-        self._file.close()
+        self._trace.close()
 
     def _write(self, entry: dict[str, Any]) -> None:
-        entry["ts"] = datetime.now(timezone.utc).isoformat()
+        """Legacy raw write — still supported for non-standard events."""
+        entry["ts"] = _utc_now()
         try:
             line = json.dumps(entry, ensure_ascii=False, default=str)
         except Exception:
             line = json.dumps({"type": "log_error", "message": "failed to serialize entry"})
-        self._file.write(line + "\n")
-        self._file.flush()
+        with self._trace._lock:
+            self._trace._file.write(line + "\n")
+            self._trace._file.flush()
 
 
 # ---------------------------------------------------------------------------

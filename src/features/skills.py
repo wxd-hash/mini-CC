@@ -117,16 +117,13 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 def discover_skills(project_dir: str) -> None:
     """Scan for SKILL.md files in project and user skill directories.
 
-    Matches claude-code's loadSkillsDir pattern:
-    - {project}/.claude/skills/<name>/SKILL.md
-    - ~/.claude/skills/<name>/SKILL.md
+    Only searches .mini-claude/skills/ — keeps Mini-CC skills separate
+    from Claude Code skills to avoid name/description conflicts.
     """
     from pathlib import Path
 
     search_dirs = [
-        Path(project_dir) / ".claude" / "skills",
         Path(project_dir) / ".mini-claude" / "skills",
-        Path.home() / ".claude" / "skills",
         Path.home() / ".mini-claude" / "skills",
     ]
 

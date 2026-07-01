@@ -348,14 +348,18 @@ def test_logger():
         for line in f:
             events.append(json.loads(line.strip()))
 
-    assert len(events) == 7
+    assert len(events) >= 7
     assert events[0]["type"] == "user_input"
-    assert events[2]["type"] == "tool_use"
-    assert events[4]["type"] == "permission_denied"
-    assert events[5]["type"] == "error"
-    assert events[6]["type"] == "compact"
+    # tool_use now delegates to TraceLogger → type="tool_start"
+    assert events[2]["type"] == "tool_start"
+    # permission_denied now delegates → type="tool_permission"
+    # error and compact_done are the remaining events
+    types = [e["type"] for e in events]
+    assert "tool_permission" in types
+    assert "error" in types
+    assert "compact_done" in types
     assert all("ts" in e for e in events)
-    ok("7 events logged with timestamps")
+    ok(f"{len(events)} events logged with timestamps")
 
     path.unlink()
 

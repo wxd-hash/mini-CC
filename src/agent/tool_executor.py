@@ -44,11 +44,13 @@ class StreamingToolExecutor:
         tools: dict[str, Any],
         permission_checker: Any,
         logger: Any = None,
+        trace: Any = None,
         max_workers: int = 10,
     ) -> None:
         self._tools = tools
         self._permissions = permission_checker
         self._logger = logger
+        self._trace = trace
 
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
         self._futures: dict[str, Future] = {}       # tool_use_id → Future
@@ -85,6 +87,8 @@ class StreamingToolExecutor:
                 f"错误: 未知工具 '{block.name}'。"
                 f"可用工具: {', '.join(sorted(self._tools.keys()))}。"
             )
+            if self._trace:
+                self._trace.tool_permission(block.name, "", "deny", "", reason="unknown_tool")
             return
 
         perm_result = self._permissions.check(tool, block.arguments)
@@ -99,15 +103,30 @@ class StreamingToolExecutor:
                         f"BLOCKED: 会杀死 agent 自身（PID={os.getpid()}）。"
                         f"用 taskkill /PID <目标PID> 杀特定进程，不要用 /IM python 全部杀。"
                     )
+                    if self._trace:
+                        self._trace.tool_permission(block.name, cmd[:80], "deny", "", reason="self_destruct")
                     return
             self._results[block.id] = "权限被拒绝。"
+            if self._trace:
+                self._trace.tool_permission(block.name, str(block.arguments)[:80], "deny", "")
             return
+
+        # Log permission grant for non-read-only tools
+        if self._trace and not tool.is_read_only():
+            self._trace.tool_permission(
+                block.name,
+                str(block.arguments)[:80],
+                "allow",
+                getattr(self._permissions, 'mode', ''),
+            )
 
         # Check if stuck
         if self._stuck.check(block.name, block.arguments):
             self._results[block.id] = (
                 f"警告: {block.name} 已用相同参数调用了 3 次。"
             )
+            if self._trace:
+                self._trace.tool_permission(block.name, str(block.arguments)[:80], "deny", "", reason="stuck_3x")
             return
 
         # Decide: can start now, or must wait?
